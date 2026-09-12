@@ -1,0 +1,112 @@
+openapi: 3.0.3
+info:
+  title: nudge-engine API
+  version: 1.0.0
+  description: Goal-aware behavior nudges generated through a three-stage reasoning pipeline.
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+paths:
+  /health:
+    get:
+      summary: Check service health
+      responses:
+        '200':
+          description: Service is running
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /nudge:
+    post:
+      summary: Generate a goal-aware behavior nudge
+      description: Classifies the activity with OpenRouter, optionally grounds ambiguous cases with Exa, then produces a structured decision with OpenAI.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NudgeRequest'
+            example:
+              goals: [read more books, lose weight]
+              activity:
+                app: Instagram
+                durationMin: 22
+                timeOfDay: '21:30'
+      responses:
+        '200':
+          description: Nudge decision generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NudgeResponse'
+              example:
+                classification: misaligned
+                shouldNotify: true
+                message: A short break from the feed could make room for the reading you wanted tonight.
+                microAction: Put Instagram away and read 10 pages before bed.
+                groundingUsed: false
+        '400':
+          description: Missing or invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Provide non-empty goals and an activity with an app.
+components:
+  schemas:
+    NudgeRequest:
+      type: object
+      required: [goals, activity]
+      properties:
+        goals:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: The user's active goals.
+        activity:
+          type: object
+          required: [app]
+          properties:
+            app:
+              type: string
+              description: App or activity currently being used.
+            durationMin:
+              type: number
+              minimum: 0
+              description: Minutes spent on the activity.
+            timeOfDay:
+              type: string
+              pattern: '^([01]\\d|2[0-3]):[0-5]\\d$'
+              example: '21:30'
+    NudgeResponse:
+      type: object
+      required: [classification, shouldNotify, message, microAction, groundingUsed]
+      properties:
+        classification:
+          type: string
+          enum: [aligned, misaligned, ambiguous]
+        shouldNotify:
+          type: boolean
+        message:
+          type: string
+        microAction:
+          type: string
+        groundingUsed:
+          type: boolean
+        error:
+          type: boolean
+          description: Present and true when the OpenAI decision stage fails and a safe fallback is returned.
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

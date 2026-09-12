@@ -21,6 +21,16 @@ node test.js
 
 The server runs on `http://localhost:3000` by default. Set `PORT` to change it. Optional `OPENROUTER_MODEL` and `OPENAI_MODEL` environment variables override the defaults (`google/gemini-2.5-flash` and `gpt-5.6`).
 
+## Interactive API documentation
+
+The reusable API definition is [openapi.yaml](./openapi.yaml). To present and test it in Swagger UI, run this in a separate terminal:
+
+```bash
+npm run swagger
+```
+
+Swagger UI starts a local documentation server and watches `openapi.yaml` for changes. Start `npm run start` separately before using **Try it out** against the local API.
+
 ## API
 
 ```bash
