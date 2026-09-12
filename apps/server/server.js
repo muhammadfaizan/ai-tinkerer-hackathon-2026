@@ -17,14 +17,14 @@ const parseJson = (value) => {
 };
 const activitySummary = (activity) => `${activity.app} for ${activity.durationMin ?? 'an unknown number of'} minutes at ${activity.timeOfDay ?? 'an unknown time'}`;
 
-async function classify(goals, activity) {
+async function classify(goals, activity, habits = '') {
   const fallback = { classification: 'ambiguous', reasoning: 'Classification was unavailable, so the activity needs cautious review.' };
   try {
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'Classify an activity against stated goals. Reply ONLY with valid JSON: {"classification":"aligned|misaligned|ambiguous","reasoning":"one sentence"}. Use ambiguous when its purpose could reasonably support a goal.' },
-        { role: 'user', content: JSON.stringify({ goals, activity }) }
+        { role: 'user', content: JSON.stringify({ goals, activity, habits }) }
       ], temperature: 0
     }, { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'nudge-engine' }, timeout: 15000 });
     const parsed = parseJson(response.data.choices?.[0]?.message?.content);
@@ -71,13 +71,13 @@ async function ground(goals, activity) {
   }
 }
 
-async function decide(goals, activity, classification, grounding) {
+async function decide(goals, activity, habits, classification, grounding) {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.6', reasoning: { effort: 'low' }, max_output_tokens: 300,
-      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. For commuting, include a specific leave-by time when the input time makes that possible.',
-      input: JSON.stringify({ goals, activity, classification, grounding }),
+      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. Personalize recommendations using the supplied habits only when relevant; never invent habits. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
+      input: JSON.stringify({ goals, activity, habits, classification, grounding }),
       text: { format: { type: 'json_schema', name: 'nudge_decision', strict: true, schema: { type: 'object', additionalProperties: false, properties: { shouldNotify: { type: 'boolean' }, message: { type: 'string' }, microAction: { type: 'string' } }, required: ['shouldNotify', 'message', 'microAction'] } } }
     });
     return { ...parseJson(response.output_text), error: false };
@@ -88,11 +88,11 @@ async function decide(goals, activity, classification, grounding) {
 }
 
 app.post('/nudge', async (req, res) => {
-  const { goals, activity } = req.body || {};
+  const { goals, activity, habits = '' } = req.body || {};
   if (!Array.isArray(goals) || !goals.length || !activity || typeof activity.app !== 'string') return res.status(400).json({ error: 'Provide non-empty goals and an activity with an app.' });
-  const stageOne = await classify(goals, activity);
+  const stageOne = await classify(goals, activity, habits);
   const grounding = stageOne.classification === 'ambiguous' ? await ground(goals, activity) : [];
-  const decision = await decide(goals, activity, stageOne, grounding);
+  const decision = await decide(goals, activity, habits, stageOne, grounding);
   res.json({ classification: stageOne.classification, shouldNotify: decision.shouldNotify, message: decision.message, microAction: decision.microAction, groundingUsed: grounding.length > 0, ...(decision.error ? { error: true } : {}) });
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));

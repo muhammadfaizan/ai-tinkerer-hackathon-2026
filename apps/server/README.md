@@ -21,6 +21,8 @@ node test.js
 
 The server runs on `http://localhost:3000` by default. Set `PORT` to change it. Optional `OPENROUTER_MODEL` and `OPENAI_MODEL` environment variables override the defaults (`google/gemini-2.5-flash` and `gpt-5.6`).
 
+The `/nudge` request also accepts an optional `habits` string. The mobile app uses it for a user-provided routine note so the final recommendation can tailor a commute or reading suggestion without inventing personal context.
+
 ## Exa grounding
 
 Set `EXA_API_KEY` in `apps/server/.env` (using the existing `.env.example` as the template). When the OpenRouter classifier returns `ambiguous`, the service uses Exa's official JavaScript SDK to search for three relevant sources and sends their title/highlight snippets to the final decision model. Missing keys, errors, and 12-second timeouts are logged and safely skip grounding.
