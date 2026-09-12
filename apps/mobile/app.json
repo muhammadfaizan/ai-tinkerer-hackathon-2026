@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Nudge Coach",
+    "slug": "nudge-coach",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "com.nudgeengine.mobile"
+    },
+    "ios": {
+      "bundleIdentifier": "com.nudgeengine.mobile"
+    }
+  }
+}

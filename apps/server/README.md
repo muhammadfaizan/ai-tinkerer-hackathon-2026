@@ -21,6 +21,10 @@ node test.js
 
 The server runs on `http://localhost:3000` by default. Set `PORT` to change it. Optional `OPENROUTER_MODEL` and `OPENAI_MODEL` environment variables override the defaults (`google/gemini-2.5-flash` and `gpt-5.6`).
 
+## Exa grounding
+
+Set `EXA_API_KEY` in `apps/server/.env` (using the existing `.env.example` as the template). When the OpenRouter classifier returns `ambiguous`, the service uses Exa's official JavaScript SDK to search for three relevant sources and sends their title/highlight snippets to the final decision model. Missing keys, errors, and 12-second timeouts are logged and safely skip grounding.
+
 ## Interactive API documentation
 
 The reusable API definition is [openapi.yaml](./openapi.yaml). To present and test it in Swagger UI, run this in a separate terminal:

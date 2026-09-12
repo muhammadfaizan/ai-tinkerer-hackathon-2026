@@ -2,6 +2,8 @@ require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const OpenAI = require('openai');
+const ExaModule = require('exa-js');
+const Exa = ExaModule.default || ExaModule;
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -36,9 +38,33 @@ async function classify(goals, activity) {
 
 async function ground(goals, activity) {
   try {
-    const query = `Is ${activitySummary(activity)} useful for someone whose goals are: ${goals.join(', ')}?`;
-    const response = await axios.post('https://api.exa.ai/search', { query, type: 'auto', numResults: 3, contents: { text: { maxCharacters: 500 } } }, { headers: { 'x-api-key': process.env.EXA_API_KEY, 'Content-Type': 'application/json' }, timeout: 12000 });
-    return (response.data.results || []).slice(0, 3).map((result) => ({ title: result.title || 'Untitled source', snippet: result.text || result.highlights?.join(' ') || '' })).filter((result) => result.snippet || result.title !== 'Untitled source');
+    if (!process.env.EXA_API_KEY) {
+      console.warn('[ground] Exa skipped: EXA_API_KEY is not configured.');
+      return [];
+    }
+
+    const exa = new Exa(process.env.EXA_API_KEY);
+    const query = `Is ${activitySummary(activity)} plausibly useful toward these goals: ${goals.join(', ')}?`;
+    let timeoutId;
+    try {
+      const response = await Promise.race([
+        exa.search(query, {
+          type: 'auto',
+          numResults: 3,
+          contents: { highlights: true }
+        }),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Exa request timed out after 12 seconds')), 12000);
+        })
+      ]);
+
+      return (response.results || []).slice(0, 3).map((result) => ({
+        title: result.title || 'Untitled source',
+        snippet: Array.isArray(result.highlights) ? result.highlights.join(' ') : ''
+      })).filter((result) => result.snippet || result.title !== 'Untitled source');
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (error) {
     console.error('[ground] Exa failed:', error.message);
     return [];
