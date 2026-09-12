@@ -5,7 +5,6 @@ import {
   Animated,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -15,6 +14,7 @@ import {
   View
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from './config';
 
 const GOALS_KEY = 'userGoals';
@@ -138,8 +138,8 @@ export default function App() {
   const [ready, setReady] = useState(false); const [goals, setGoals] = useState([]); const [habits, setHabits] = useState(''); const [editing, setEditing] = useState(false);
   useEffect(() => { AsyncStorage.multiGet([GOALS_KEY, HABITS_KEY]).then(([[, savedGoals], [, savedHabits]]) => { if (savedGoals) setGoals(JSON.parse(savedGoals)); if (savedHabits) setHabits(savedHabits); }).catch(() => {}).finally(() => setReady(true)); }, []);
   const saveGoals = async (nextGoals, nextHabits) => { const cleanHabits = nextHabits.trim(); await AsyncStorage.multiSet([[GOALS_KEY, JSON.stringify(nextGoals)], [HABITS_KEY, cleanHabits]]); setGoals(nextGoals); setHabits(cleanHabits); setEditing(false); };
-  if (!ready) return <SafeAreaView style={styles.loading}><ActivityIndicator size="large" color="#2D7B70" /></SafeAreaView>;
-  return (!goals.length || editing) ? <GoalsEditor goals={goals} habits={habits} onSave={saveGoals} onCancel={goals.length ? () => setEditing(false) : null} /> : <HomeScreen goals={goals} habits={habits} onEditGoals={() => setEditing(true)} />;
+  if (!ready) return <SafeAreaProvider><SafeAreaView style={styles.loading}><ActivityIndicator size="large" color="#2D7B70" /></SafeAreaView></SafeAreaProvider>;
+  return <SafeAreaProvider>{(!goals.length || editing) ? <GoalsEditor goals={goals} habits={habits} onSave={saveGoals} onCancel={goals.length ? () => setEditing(false) : null} /> : <HomeScreen goals={goals} habits={habits} onEditGoals={() => setEditing(true)} />}</SafeAreaProvider>;
 }
 
 const styles = StyleSheet.create({
