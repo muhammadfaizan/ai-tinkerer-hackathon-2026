@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -16,9 +17,22 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { BACKEND_URL } from './config';
+import UsageStatsModule from './modules/usage-stats-module/src/UsageStatsModule';
 
 const GOALS_KEY = 'userGoals';
 const HABITS_KEY = 'userHabits';
+const MIN_LIVE_ACTIVITY_MINUTES = 1;
+
+const APP_LABELS = {
+  'com.instagram.android': 'Instagram',
+  'com.zhiliaoapp.musically': 'TikTok',
+  'com.google.android.youtube': 'YouTube',
+  'com.twitter.android': 'X',
+  'com.android.chrome': 'Chrome',
+  'com.ubercab': 'Uber',
+  'com.careem.acma': 'Careem',
+  'sinet.startup.inDriver': 'inDrive'
+};
 
 const scenarios = [
   { label: '20 min on Instagram', note: '9:30 PM · winding down', activity: { app: 'Instagram', durationMin: 20, timeOfDay: '21:30' } },
@@ -89,8 +103,11 @@ function HomeScreen({ goals, habits, onEditGoals }) {
   const [activeNudge, setActiveNudge] = useState(null);
   const [status, setStatus] = useState('Choose a moment to check in with yourself.');
   const [history, setHistory] = useState([]);
+  const [usageAccess, setUsageAccess] = useState(false);
+  const [usageStatus, setUsageStatus] = useState(UsageStatsModule.isAvailable ? 'Checking usage access…' : 'Live Android tracking is available in the development build.');
   const nudgeSlide = useRef(new Animated.Value(-18)).current;
   const nudgeOpacity = useRef(new Animated.Value(0)).current;
+  const lastAutoNudge = useRef({ packageName: '', at: 0 });
 
   function revealNudge(nudge) {
     nudgeSlide.setValue(-18);
@@ -102,22 +119,87 @@ function HomeScreen({ goals, habits, onEditGoals }) {
     ]).start();
   }
 
-  async function simulate(scenario) {
+  async function requestNudge(activity, label, source = 'demo') {
     setLoading(true); setActiveNudge(null); setStatus('Thinking through this moment…');
     try {
-      const response = await fetch(`${BACKEND_URL.replace(/\/$/, '')}/nudge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goals, activity: scenario.activity, habits }) });
+      const response = await fetch(`${BACKEND_URL.replace(/\/$/, '')}/nudge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ goals, activity, habits }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'The coach could not reach the server.');
       if (result.shouldNotify) {
         revealNudge(result);
-        setHistory((items) => [{ ...result, label: scenario.label, createdAt: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }, ...items]);
+        setHistory((items) => [{ ...result, label, source, createdAt: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }, ...items]);
         setStatus('Here’s a gentle option.');
       } else {
         setStatus('You’re on track — no nudge needed.');
-        setHistory((items) => [{ ...result, label: scenario.label, createdAt: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }, ...items]);
+        setHistory((items) => [{ ...result, label, source, createdAt: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }, ...items]);
       }
     } catch (error) { setStatus(`Couldn’t reach your coach: ${error.message}`); }
     finally { setLoading(false); }
+  }
+
+  async function simulate(scenario) {
+    return requestNudge(scenario.activity, scenario.label);
+  }
+
+  async function refreshUsageAccess() {
+    if (!UsageStatsModule.isAvailable) return false;
+    try {
+      const granted = await UsageStatsModule.hasUsageAccess();
+      setUsageAccess(granted);
+      setUsageStatus(granted ? 'Live tracking is on. Only the recent app name and duration are used for a goal check-in.' : 'To give you real nudges, Nudge Coach needs Android Usage Access to see recent app activity. A check-in sends only the app name and duration to your configured Nudge backend.');
+      return granted;
+    } catch (error) {
+      console.log('Usage-access check failed', error);
+      setUsageStatus('We could not check Android usage access. Demo Mode still works.');
+      return false;
+    }
+  }
+
+  async function pollRecentUsage() {
+    if (!UsageStatsModule.isAvailable || loading) return;
+    const granted = await refreshUsageAccess();
+    if (!granted) return;
+    try {
+      const usage = await UsageStatsModule.getRecentUsage(30);
+      if (!usage || usage.durationMin < MIN_LIVE_ACTIVITY_MINUTES) return;
+      const now = Date.now();
+      const previous = lastAutoNudge.current;
+      if (previous.packageName === usage.packageName && now - previous.at < 10 * 60 * 1000) return;
+      lastAutoNudge.current = { packageName: usage.packageName, at: now };
+      const app = APP_LABELS[usage.packageName] || usage.appLabel || usage.packageName;
+      console.log('Recent Android usage detected', usage);
+      setUsageStatus(`Last activity: ${app} for about ${usage.durationMin} min. Checking in…`);
+      await requestNudge(
+        { app, durationMin: usage.durationMin, timeOfDay: new Date().toTimeString().slice(0, 5) },
+        `${app} · ${usage.durationMin} min`,
+        'live'
+      );
+    } catch (error) {
+      console.log('Usage polling failed', error);
+      setUsageStatus('Live tracking could not read recent activity. Demo Mode still works.');
+    }
+  }
+
+  useEffect(() => {
+    refreshUsageAccess();
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        refreshUsageAccess().then((granted) => granted && pollRecentUsage());
+      }
+    });
+    const timer = setInterval(() => {
+      if (AppState.currentState === 'active') pollRecentUsage();
+    }, 60_000);
+    return () => { appStateSubscription.remove(); clearInterval(timer); };
+  }, [goals, habits]);
+
+  async function openUsageSettings() {
+    if (!UsageStatsModule.isAvailable) {
+      setUsageStatus('Expo Go cannot load this Android module. Open the Android development build to use live tracking.');
+      return;
+    }
+    try { UsageStatsModule.openUsageAccessSettings(); }
+    catch (error) { console.log('Opening usage settings failed', error); setUsageStatus('Could not open Android Settings.'); }
   }
 
   const choose = (choice) => { console.log(`Nudge ${choice.toLowerCase()}`, activeNudge); setActiveNudge(null); setStatus(`${choice}. You’re in charge.`); showConfirmation(`${choice}. You’re in charge.`); };
@@ -125,7 +207,8 @@ function HomeScreen({ goals, habits, onEditGoals }) {
     <View style={styles.header}><View><Text style={styles.brand}>nudge</Text><Text style={styles.greeting}>A calmer way forward.</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>✦</Text></View></View>
     <View style={styles.goalsCard}><View style={styles.sectionHeader}><Text style={styles.sectionLabel}>YOUR FOCUS</Text><Pressable onPress={onEditGoals}><Text style={styles.editLink}>Edit goals</Text></Pressable></View>{goals.map((goal, i) => <Text key={`${goal}-${i}`} style={styles.goalText}>• {goal}</Text>)}</View>
     {!!habits && <Text style={styles.routineText}>Guidance tailored to: {habits}</Text>}
-    <Text style={styles.sectionTitle}>Simulate a moment</Text><Text style={styles.sectionHint}>Try a scenario and see how your coach responds.</Text>
+    <View style={styles.liveCard}><Text style={styles.liveKicker}>LIVE ANDROID TRACKING</Text><Text style={styles.liveTitle}>{UsageStatsModule.isAvailable ? (usageAccess ? 'Usage access is enabled' : 'Give Nudge Coach usage access') : 'Use the Android development build'}</Text><Text style={styles.liveText}>{usageStatus}</Text>{UsageStatsModule.isAvailable && !usageAccess && <Pressable style={styles.liveButton} onPress={openUsageSettings}><Text style={styles.liveButtonText}>Grant Usage Access</Text></Pressable>}</View>
+    <Text style={styles.sectionTitle}>Demo Mode</Text><Text style={styles.sectionHint}>Try a scenario on demand — useful for a reliable demo.</Text>
     {scenarios.map((scenario) => <Pressable key={scenario.label} style={styles.scenarioCard} onPress={() => simulate(scenario)} disabled={loading}><View><Text style={styles.scenarioTitle}>{scenario.label}</Text><Text style={styles.scenarioNote}>{scenario.note}</Text></View><Text style={styles.arrow}>›</Text></Pressable>)}
     {loading ? <View style={styles.statusCard}><ActivityIndicator color="#2D7B70" /><Text style={styles.statusText}>Considering your goals…</Text></View> : <View style={styles.statusCard}><Text style={styles.statusText}>{status}</Text></View>}
     {activeNudge && <Animated.View style={[styles.nudgeBanner, { opacity: nudgeOpacity, transform: [{ translateY: nudgeSlide }] }]}><NudgeCard nudge={activeNudge} onChoice={choose} /></Animated.View>}
@@ -143,5 +226,5 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#F7FAF8' }, loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7FAF8' }, onboarding: { flex: 1, padding: 28, backgroundColor: '#F7FAF8' }, logo: { width: 48, height: 48, borderRadius: 16, backgroundColor: '#DDF2EC', alignItems: 'center', justifyContent: 'center', marginTop: 28, marginBottom: 38 }, logoText: { fontSize: 28, color: '#226B62', fontWeight: '800' }, eyebrow: { fontSize: 11, letterSpacing: 1.6, color: '#56877C', fontWeight: '700', marginBottom: 12 }, title: { fontSize: 34, lineHeight: 40, color: '#193B38', fontWeight: '700', letterSpacing: -0.8 }, subtitle: { color: '#617671', fontSize: 16, lineHeight: 24, marginTop: 14, marginBottom: 30 }, inputRow: { flexDirection: 'row', gap: 10 }, input: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 16, height: 54, color: '#193B38', fontSize: 16, borderWidth: 1, borderColor: '#DCE7E2' }, addButton: { backgroundColor: '#DFF0EC', borderRadius: 14, justifyContent: 'center', paddingHorizontal: 18 }, addButtonText: { color: '#226B62', fontWeight: '700' }, disabled: { opacity: 0.42 }, goalList: { marginTop: 18, gap: 10 }, goalPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: '#E9F5F1', borderRadius: 99, paddingLeft: 15, paddingRight: 11, paddingVertical: 10 }, goalPillText: { color: '#245E57', fontWeight: '600' }, remove: { color: '#4A7770', fontSize: 22, lineHeight: 20 }, habitLabel: { color: '#56877C', fontSize: 11, fontWeight: '800', letterSpacing: 1.1, marginTop: 24, marginBottom: 8 }, habitInput: { minHeight: 82, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, color: '#193B38', fontSize: 15, lineHeight: 21, textAlignVertical: 'top', borderWidth: 1, borderColor: '#DCE7E2' }, fill: { flex: 1 }, primaryButton: { backgroundColor: '#226B62', height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, primaryButtonText: { color: '#FFF', fontSize: 16, fontWeight: '700' }, textButton: { alignItems: 'center', paddingVertical: 18 }, textButtonText: { color: '#617671', fontWeight: '600' }, home: { padding: 22, paddingBottom: 46 }, header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 26 }, brand: { fontSize: 27, color: '#193B38', fontWeight: '800', letterSpacing: -1 }, greeting: { fontSize: 14, color: '#73857F', marginTop: 3 }, avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#E0F1ED', alignItems: 'center', justifyContent: 'center' }, avatarText: { color: '#26776B', fontSize: 18 }, goalsCard: { backgroundColor: '#E8F3F6', borderRadius: 20, padding: 18, marginBottom: 16 }, sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }, sectionLabel: { fontSize: 11, letterSpacing: 1.2, color: '#46778B', fontWeight: '800' }, editLink: { fontSize: 13, color: '#246D8B', fontWeight: '700' }, goalText: { color: '#214C5F', fontSize: 15, marginTop: 5 }, routineText: { color: '#527A73', fontSize: 13, lineHeight: 19, marginBottom: 22, paddingHorizontal: 3 }, sectionTitle: { color: '#193B38', fontWeight: '700', fontSize: 20, letterSpacing: -0.3 }, sectionHint: { color: '#73857F', fontSize: 14, marginTop: 5, marginBottom: 15 }, scenarioCard: { backgroundColor: '#FFF', borderRadius: 17, padding: 17, marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E6EEEA' }, scenarioTitle: { color: '#24423F', fontSize: 16, fontWeight: '650' }, scenarioNote: { color: '#84938E', fontSize: 13, marginTop: 4 }, arrow: { color: '#59A092', fontSize: 31, lineHeight: 31 }, statusCard: { marginVertical: 14, minHeight: 54, borderRadius: 14, backgroundColor: '#EDF5F2', padding: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10 }, statusText: { color: '#52716B', fontSize: 14, textAlign: 'center' }, nudgeBanner: { marginBottom: 30 }, nudgeCard: { backgroundColor: '#FFFDF8', borderRadius: 22, padding: 21, marginBottom: 30, borderWidth: 1, borderColor: '#F0E6D3', shadowColor: '#47645D', shadowOpacity: 0.09, shadowRadius: 14, elevation: 2 }, nudgeKicker: { color: '#A27435', fontWeight: '800', fontSize: 10, letterSpacing: 1.2 }, nudgeMessage: { color: '#33463F', fontSize: 18, lineHeight: 27, fontWeight: '600', marginTop: 10 }, actionBox: { backgroundColor: '#F4EEE1', borderRadius: 14, padding: 15, marginTop: 16, marginBottom: 17 }, actionLabel: { color: '#A27435', fontWeight: '800', fontSize: 10, letterSpacing: 1.1, marginBottom: 6 }, microAction: { color: '#5E4825', fontSize: 18, lineHeight: 25, fontWeight: '800' }, responseRow: { flexDirection: 'row', gap: 10, marginBottom: 15 }, acceptButton: { flex: 1, alignItems: 'center', padding: 13, borderRadius: 12, backgroundColor: '#226B62' }, acceptText: { color: '#FFF', fontWeight: '700' }, outlineButton: { flex: 1, alignItems: 'center', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#BBD3CB' }, outlineText: { color: '#326B61', fontWeight: '700' }, workingText: { color: '#527A73', fontWeight: '650', textAlign: 'center', fontSize: 13 }, empty: { color: '#87958F', fontSize: 14, marginTop: 12 }, historyItem: { flexDirection: 'row', gap: 11, paddingVertical: 13, borderBottomWidth: 1, borderColor: '#E6EEEA' }, historyDot: { width: 9, height: 9, borderRadius: 5, marginTop: 5 }, notifyDot: { backgroundColor: '#E0A952' }, trackDot: { backgroundColor: '#61A996' }, historyTitle: { color: '#35514B', fontWeight: '650', fontSize: 14 }, historySub: { color: '#82918C', marginTop: 3, fontSize: 12 }
+  safe: { flex: 1, backgroundColor: '#F7FAF8' }, loading: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7FAF8' }, onboarding: { flex: 1, padding: 28, backgroundColor: '#F7FAF8' }, logo: { width: 48, height: 48, borderRadius: 16, backgroundColor: '#DDF2EC', alignItems: 'center', justifyContent: 'center', marginTop: 28, marginBottom: 38 }, logoText: { fontSize: 28, color: '#226B62', fontWeight: '800' }, eyebrow: { fontSize: 11, letterSpacing: 1.6, color: '#56877C', fontWeight: '700', marginBottom: 12 }, title: { fontSize: 34, lineHeight: 40, color: '#193B38', fontWeight: '700', letterSpacing: -0.8 }, subtitle: { color: '#617671', fontSize: 16, lineHeight: 24, marginTop: 14, marginBottom: 30 }, inputRow: { flexDirection: 'row', gap: 10 }, input: { flex: 1, backgroundColor: '#FFFFFF', borderRadius: 14, paddingHorizontal: 16, height: 54, color: '#193B38', fontSize: 16, borderWidth: 1, borderColor: '#DCE7E2' }, addButton: { backgroundColor: '#DFF0EC', borderRadius: 14, justifyContent: 'center', paddingHorizontal: 18 }, addButtonText: { color: '#226B62', fontWeight: '700' }, disabled: { opacity: 0.42 }, goalList: { marginTop: 18, gap: 10 }, goalPill: { alignSelf: 'flex-start', flexDirection: 'row', gap: 12, alignItems: 'center', backgroundColor: '#E9F5F1', borderRadius: 99, paddingLeft: 15, paddingRight: 11, paddingVertical: 10 }, goalPillText: { color: '#245E57', fontWeight: '600' }, remove: { color: '#4A7770', fontSize: 22, lineHeight: 20 }, habitLabel: { color: '#56877C', fontSize: 11, fontWeight: '800', letterSpacing: 1.1, marginTop: 24, marginBottom: 8 }, habitInput: { minHeight: 82, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, color: '#193B38', fontSize: 15, lineHeight: 21, textAlignVertical: 'top', borderWidth: 1, borderColor: '#DCE7E2' }, fill: { flex: 1 }, primaryButton: { backgroundColor: '#226B62', height: 56, borderRadius: 16, alignItems: 'center', justifyContent: 'center' }, primaryButtonText: { color: '#FFF', fontSize: 16, fontWeight: '700' }, textButton: { alignItems: 'center', paddingVertical: 18 }, textButtonText: { color: '#617671', fontWeight: '600' }, home: { padding: 22, paddingBottom: 46 }, header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, marginBottom: 26 }, brand: { fontSize: 27, color: '#193B38', fontWeight: '800', letterSpacing: -1 }, greeting: { fontSize: 14, color: '#73857F', marginTop: 3 }, avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#E0F1ED', alignItems: 'center', justifyContent: 'center' }, avatarText: { color: '#26776B', fontSize: 18 }, goalsCard: { backgroundColor: '#E8F3F6', borderRadius: 20, padding: 18, marginBottom: 16 }, sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 }, sectionLabel: { fontSize: 11, letterSpacing: 1.2, color: '#46778B', fontWeight: '800' }, editLink: { fontSize: 13, color: '#246D8B', fontWeight: '700' }, goalText: { color: '#214C5F', fontSize: 15, marginTop: 5 }, routineText: { color: '#527A73', fontSize: 13, lineHeight: 19, marginBottom: 16, paddingHorizontal: 3 }, liveCard: { backgroundColor: '#EAF4F0', borderRadius: 19, padding: 18, marginBottom: 24, borderWidth: 1, borderColor: '#D5E7E0' }, liveKicker: { color: '#3D7E70', fontSize: 10, fontWeight: '800', letterSpacing: 1.2 }, liveTitle: { color: '#214B43', fontSize: 17, fontWeight: '700', marginTop: 7 }, liveText: { color: '#53766E', fontSize: 14, lineHeight: 20, marginTop: 7 }, liveButton: { alignSelf: 'flex-start', backgroundColor: '#226B62', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, marginTop: 14 }, liveButtonText: { color: '#FFF', fontWeight: '700', fontSize: 13 }, sectionTitle: { color: '#193B38', fontWeight: '700', fontSize: 20, letterSpacing: -0.3 }, sectionHint: { color: '#73857F', fontSize: 14, marginTop: 5, marginBottom: 15 }, scenarioCard: { backgroundColor: '#FFF', borderRadius: 17, padding: 17, marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: '#E6EEEA' }, scenarioTitle: { color: '#24423F', fontSize: 16, fontWeight: '650' }, scenarioNote: { color: '#84938E', fontSize: 13, marginTop: 4 }, arrow: { color: '#59A092', fontSize: 31, lineHeight: 31 }, statusCard: { marginVertical: 14, minHeight: 54, borderRadius: 14, backgroundColor: '#EDF5F2', padding: 14, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 10 }, statusText: { color: '#52716B', fontSize: 14, textAlign: 'center' }, nudgeBanner: { marginBottom: 30 }, nudgeCard: { backgroundColor: '#FFFDF8', borderRadius: 22, padding: 21, marginBottom: 30, borderWidth: 1, borderColor: '#F0E6D3', shadowColor: '#47645D', shadowOpacity: 0.09, shadowRadius: 14, elevation: 2 }, nudgeKicker: { color: '#A27435', fontWeight: '800', fontSize: 10, letterSpacing: 1.2 }, nudgeMessage: { color: '#33463F', fontSize: 18, lineHeight: 27, fontWeight: '600', marginTop: 10 }, actionBox: { backgroundColor: '#F4EEE1', borderRadius: 14, padding: 15, marginTop: 16, marginBottom: 17 }, actionLabel: { color: '#A27435', fontWeight: '800', fontSize: 10, letterSpacing: 1.1, marginBottom: 6 }, microAction: { color: '#5E4825', fontSize: 18, lineHeight: 25, fontWeight: '800' }, responseRow: { flexDirection: 'row', gap: 10, marginBottom: 15 }, acceptButton: { flex: 1, alignItems: 'center', padding: 13, borderRadius: 12, backgroundColor: '#226B62' }, acceptText: { color: '#FFF', fontWeight: '700' }, outlineButton: { flex: 1, alignItems: 'center', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#BBD3CB' }, outlineText: { color: '#326B61', fontWeight: '700' }, workingText: { color: '#527A73', fontWeight: '650', textAlign: 'center', fontSize: 13 }, empty: { color: '#87958F', fontSize: 14, marginTop: 12 }, historyItem: { flexDirection: 'row', gap: 11, paddingVertical: 13, borderBottomWidth: 1, borderColor: '#E6EEEA' }, historyDot: { width: 9, height: 9, borderRadius: 5, marginTop: 5 }, notifyDot: { backgroundColor: '#E0A952' }, trackDot: { backgroundColor: '#61A996' }, historyTitle: { color: '#35514B', fontWeight: '650', fontSize: 14 }, historySub: { color: '#82918C', marginTop: 3, fontSize: 12 }
 });

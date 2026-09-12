@@ -5,11 +5,20 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-dev-client"
+    ],
     "android": {
       "package": "com.nudgeengine.mobile"
     },
     "ios": {
       "bundleIdentifier": "com.nudgeengine.mobile"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "dedb9650-93ba-4fd6-a48e-3c9cdb84db9a"
+      }
+    },
+    "owner": "muhammadfaizan-ai"
   }
 }
