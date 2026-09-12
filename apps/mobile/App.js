@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   AppState,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -63,6 +64,8 @@ function GoalsEditor({ goals: initialGoals = [], habits: initialHabits = '', onS
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="dark-content" />
+      <KeyboardAvoidingView style={styles.fill} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView style={styles.safe} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <View style={styles.onboarding}>
         <View style={styles.logo}><Text style={styles.logoText}>n</Text></View>
         <Text style={styles.eyebrow}>YOUR INTENT, GENTLY HELD</Text>
@@ -81,6 +84,8 @@ function GoalsEditor({ goals: initialGoals = [], habits: initialHabits = '', onS
         <Pressable onPress={() => onSave(goals, habits)} style={[styles.primaryButton, !goals.length && styles.disabled]} disabled={!goals.length}><Text style={styles.primaryButtonText}>Continue</Text></Pressable>
         {onCancel && <Pressable onPress={onCancel} style={styles.textButton}><Text style={styles.textButtonText}>Cancel</Text></Pressable>}
       </View>
+      </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -108,6 +113,7 @@ function HomeScreen({ goals, habits, onEditGoals }) {
   const nudgeSlide = useRef(new Animated.Value(-18)).current;
   const nudgeOpacity = useRef(new Animated.Value(0)).current;
   const lastAutoNudge = useRef({ packageName: '', at: 0 });
+  const usagePrompted = useRef(false);
 
   function revealNudge(nudge) {
     nudgeSlide.setValue(-18);
@@ -181,6 +187,22 @@ function HomeScreen({ goals, habits, onEditGoals }) {
   }
 
   useEffect(() => {
+    if (Platform.OS !== 'android' || !UsageStatsModule.isAvailable || usagePrompted.current) return;
+    refreshUsageAccess().then((granted) => {
+      if (granted || usagePrompted.current) return;
+      usagePrompted.current = true;
+      Alert.alert(
+        'Enable Usage Access',
+        'To give you real nudges, Nudge Coach needs Android Usage Access for recent app names and durations. Android requires you to enable it in Settings.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Open Settings', onPress: () => openUsageSettings() }
+        ]
+      );
+    });
+  }, []);
+
+  useEffect(() => {
     refreshUsageAccess();
     const appStateSubscription = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
@@ -203,7 +225,7 @@ function HomeScreen({ goals, habits, onEditGoals }) {
   }
 
   const choose = (choice) => { console.log(`Nudge ${choice.toLowerCase()}`, activeNudge); setActiveNudge(null); setStatus(`${choice}. You’re in charge.`); showConfirmation(`${choice}. You’re in charge.`); };
-  return <SafeAreaView style={styles.safe}><StatusBar barStyle="dark-content" /><ScrollView contentContainerStyle={styles.home} showsVerticalScrollIndicator={false}>
+  return <SafeAreaView style={styles.safe}><StatusBar barStyle="dark-content" /><ScrollView contentContainerStyle={styles.home} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
     <View style={styles.header}><View><Text style={styles.brand}>nudge</Text><Text style={styles.greeting}>A calmer way forward.</Text></View><View style={styles.avatar}><Text style={styles.avatarText}>✦</Text></View></View>
     <View style={styles.goalsCard}><View style={styles.sectionHeader}><Text style={styles.sectionLabel}>YOUR FOCUS</Text><Pressable onPress={onEditGoals}><Text style={styles.editLink}>Edit goals</Text></Pressable></View>{goals.map((goal, i) => <Text key={`${goal}-${i}`} style={styles.goalText}>• {goal}</Text>)}</View>
     {!!habits && <Text style={styles.routineText}>Guidance tailored to: {habits}</Text>}
