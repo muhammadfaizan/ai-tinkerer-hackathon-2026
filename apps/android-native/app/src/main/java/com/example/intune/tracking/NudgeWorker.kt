@@ -11,6 +11,8 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -83,4 +85,12 @@ const val EXTRA_MICRO_ACTION = "micro_action"
 fun scheduleNudgeWork(context: Context) {
     val request = PeriodicWorkRequestBuilder<NudgeWorker>(15, TimeUnit.MINUTES).build()
     WorkManager.getInstance(context).enqueueUniquePeriodicWork("nudge-check", ExistingPeriodicWorkPolicy.KEEP, request)
+}
+
+fun triggerNudgeCheckNow(context: Context) {
+    WorkManager.getInstance(context).enqueueUniqueWork(
+        "nudge-check-debug",
+        ExistingWorkPolicy.REPLACE,
+        OneTimeWorkRequestBuilder<NudgeWorker>().build(),
+    )
 }

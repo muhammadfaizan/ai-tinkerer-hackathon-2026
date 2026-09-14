@@ -40,8 +40,10 @@ import com.example.intune.data.GoalsRepository
 import com.example.intune.data.NudgeApi
 import com.example.intune.data.NudgeRequest
 import com.example.intune.data.NudgeResponse
+import com.example.intune.BuildConfig
 import com.example.intune.tracking.UsageAccess
 import com.example.intune.tracking.scheduleNudgeWork
+import com.example.intune.tracking.triggerNudgeCheckNow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -142,6 +144,7 @@ fun HomeScreen(
     notificationNudge: NudgeResponse? = null,
     onNotificationNudgeShown: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val scenarios = listOf(
         DemoScenario("Doomscroll at night", ActivityPayload("Instagram", 25, "night")),
         DemoScenario("Content research scroll", ActivityPayload("Instagram", 20, "afternoon")),
@@ -157,6 +160,11 @@ fun HomeScreen(
         items(goals.size) { Text("• ${goals[it]}") }
         item { Text("Demo Mode") }
         item { Text("Background checks run about every 15 minutes; Android does not guarantee an exact time.") }
+        if (BuildConfig.DEBUG) item {
+            Button(onClick = { triggerNudgeCheckNow(context) }) {
+                Text("Trigger check now")
+            }
+        }
         items(scenarios.size) { index ->
             val scenario = scenarios[index]
             Button(onClick = {
