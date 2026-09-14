@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -29,17 +30,53 @@ import java.util.concurrent.TimeUnit
 
 class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        if (!UsageAccess.isGranted(applicationContext)) return Result.success()
+        val usageAccessGranted = UsageAccess.isGranted(applicationContext)
+        Log.d(TAG, "Usage access granted: $usageAccessGranted")
+        if (!usageAccessGranted) {
+            Log.d(TAG, "Skipping /nudge: usage access is not granted")
+            return Result.success()
+        }
         val repository = GoalsRepository(applicationContext)
         val goals = repository.goals.first()
-        val app = UsageStatsHelper(applicationContext).currentApp() ?: return Result.success()
-        if (goals.isEmpty() || app.durationMin <= 2 || app.packageName == repository.lastCheckedPackage()) return Result.success()
+        val app = UsageStatsHelper(applicationContext).currentApp()
+        if (app == null) {
+            Log.d(TAG, "Foreground app: none detected; skipping /nudge")
+            return Result.success()
+        }
+        Log.d(TAG, "Foreground app: package=${app.packageName}, label=${app.label}, category=${app.category ?: "none"}")
+        Log.d(TAG, "Foreground duration: ${app.durationMin} minutes")
+        val lastChecked = repository.lastCheckedPackage()
+        val isSameApp = app.packageName == lastChecked
+        Log.d(TAG, "Last checked app: ${lastChecked ?: "none"}; same app: $isSameApp")
+        val meetsDurationThreshold = app.durationMin > 2
+        Log.d(TAG, "Two-minute threshold met: $meetsDurationThreshold")
+        if (goals.isEmpty()) {
+            Log.d(TAG, "Skipping /nudge: no goals are stored")
+            return Result.success()
+        }
+        if (!meetsDurationThreshold) {
+            Log.d(TAG, "Skipping /nudge: foreground duration is not over 2 minutes")
+            return Result.success()
+        }
+        if (isSameApp) {
+            Log.d(TAG, "Skipping /nudge: foreground app matches the last checked app")
+            return Result.success()
+        }
 
-        val response = runCatching {
-            createNudgeApi().nudge(NudgeRequest(goals, ActivityPayload(app.label, app.durationMin, timeOfDay(), app.category)))
-        }.getOrElse { return Result.retry() }
+        val request = NudgeRequest(goals, ActivityPayload(app.label, app.durationMin, timeOfDay(), app.category))
+        Log.d(TAG, "Calling /nudge with request: $request")
+        val response = runCatching { createNudgeApi().nudge(request) }.getOrElse {
+            Log.e(TAG, "Calling /nudge failed; retrying", it)
+            return Result.retry()
+        }
+        Log.d(TAG, "Received /nudge response: $response")
         repository.saveLastCheckedPackage(app.packageName)
-        if (response.shouldNotify) notify(response)
+        if (response.shouldNotify) {
+            Log.d(TAG, "Response requires notification")
+            notify(response)
+        } else {
+            Log.d(TAG, "Response does not require notification")
+        }
         return Result.success()
     }
 
@@ -74,6 +111,7 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     private companion object {
+        const val TAG = "NudgeWorker"
         const val CHANNEL_ID = "nudges"
         const val NOTIFICATION_ID = 1
     }
