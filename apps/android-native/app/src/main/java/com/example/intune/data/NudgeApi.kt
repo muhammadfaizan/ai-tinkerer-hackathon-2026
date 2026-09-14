@@ -9,7 +9,12 @@ import retrofit2.http.POST
 
 const val BASE_URL = "https://nudge-backend-olive.vercel.app/"
 
-data class ActivityPayload(val app: String, val durationMin: Int, val timeOfDay: String)
+data class ActivityPayload(
+    val app: String,
+    val durationMin: Int,
+    val timeOfDay: String,
+    val category: String? = null,
+)
 data class NudgeRequest(val goals: List<String>, val activity: ActivityPayload)
 data class NudgeResponse(
     val classification: String,
