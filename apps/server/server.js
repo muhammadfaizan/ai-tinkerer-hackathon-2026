@@ -19,12 +19,18 @@ const activitySummary = (activity) => `${activity.app} for ${activity.durationMi
 
 async function classify(goals, activity, habits = '') {
   const fallback = { classification: 'ambiguous', reasoning: 'Classification was unavailable, so the activity needs cautious review.' };
+  const activityContext = [
+    `App: ${activity.app}`,
+    `Duration: ${activity.durationMin ?? 'unknown'} minutes`,
+    `Time of day: ${activity.timeOfDay ?? 'unknown'}`,
+    typeof activity.category === 'string' && activity.category.trim() ? `Category: ${activity.category.trim()}` : null
+  ].filter(Boolean).join('\n');
   try {
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
       messages: [
         { role: 'system', content: 'Classify an activity against stated goals. Reply ONLY with valid JSON: {"classification":"aligned|misaligned|ambiguous","reasoning":"one sentence"}. Use ambiguous when its purpose could reasonably support a goal.' },
-        { role: 'user', content: JSON.stringify({ goals, activity, habits }) }
+        { role: 'user', content: `Goals: ${goals.join(', ')}\n${activityContext}${habits ? `\nHabits: ${habits}` : ''}` }
       ], temperature: 0
     }, { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'nudge-engine' }, timeout: 15000 });
     const parsed = parseJson(response.data.choices?.[0]?.message?.content);
