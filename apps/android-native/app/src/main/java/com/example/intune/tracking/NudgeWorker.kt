@@ -22,6 +22,9 @@ import com.example.intune.R
 import com.example.intune.data.GoalsRepository
 import com.example.intune.data.NudgeRequest
 import com.example.intune.data.NudgeResponse
+import com.example.intune.data.NudgeDatabase
+import com.example.intune.data.NudgeRecord
+import com.example.intune.data.NudgeSource
 import com.example.intune.data.SessionAppPayload
 import com.example.intune.data.SessionPayload
 import com.example.intune.data.createNudgeApi
@@ -85,14 +88,22 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         repository.saveLastNotifiedAt(now)
         if (response.shouldNotify) {
             Log.d(TAG, "Response requires notification")
-            notify(response)
+            val recordId = NudgeDatabase.get(applicationContext).nudgeDao().insert(NudgeRecord(
+                timestamp = now,
+                source = NudgeSource.SESSION,
+                appSummary = session.apps.joinToString { it.label },
+                message = response.message,
+                microAction = response.microAction,
+                goalsSnapshot = goals.joinToString(),
+            ))
+            notify(response, recordId)
         } else {
             Log.d(TAG, "Response does not require notification")
         }
         return Result.success()
     }
 
-    private fun notify(nudge: NudgeResponse) {
+    private fun notify(nudge: NudgeResponse, recordId: Long) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
@@ -103,6 +114,7 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val intent = Intent(applicationContext, MainActivity::class.java)
             .putExtra(EXTRA_NUDGE_MESSAGE, nudge.message)
             .putExtra(EXTRA_MICRO_ACTION, nudge.microAction)
+            .putExtra(EXTRA_NUDGE_RECORD_ID, recordId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pendingIntent = PendingIntent.getActivity(applicationContext, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         manager.notify(NOTIFICATION_ID, NotificationCompat.Builder(applicationContext, CHANNEL_ID)
@@ -126,6 +138,7 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
 const val EXTRA_NUDGE_MESSAGE = "nudge_message"
 const val EXTRA_MICRO_ACTION = "micro_action"
+const val EXTRA_NUDGE_RECORD_ID = "nudge_record_id"
 
 fun scheduleNudgeWork(context: Context) {
     val request = PeriodicWorkRequestBuilder<NudgeWorker>(15, TimeUnit.MINUTES).build()
