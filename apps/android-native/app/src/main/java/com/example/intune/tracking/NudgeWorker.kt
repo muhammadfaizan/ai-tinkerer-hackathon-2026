@@ -3,6 +3,8 @@ package com.example.intune.tracking
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Context
@@ -20,6 +22,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.example.intune.BuildConfig
 import com.example.intune.MainActivity
 import com.example.intune.R
 import com.example.intune.data.GoalsRepository
@@ -58,9 +61,11 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             Log.d(TAG, "Skipping /nudge: no meaningful app usage in the session")
             return Result.success()
         }
+        val thresholdMin = if (BuildConfig.DEBUG) TESTING_THRESHOLD_MIN else PRODUCTION_THRESHOLD_MIN
+        Log.d(TAG, "Session threshold: ${thresholdMin}m${if (BuildConfig.DEBUG) " (temporary debug value)" else ""}")
         // A 30-minute rolling window cannot contain more than 30 minutes of foreground use.
-        if (session.totalDurationMin < TESTING_THRESHOLD_MIN) {
-            Log.d(TAG, "Skipping /nudge: session total ${session.totalDurationMin}m is under ${TESTING_THRESHOLD_MIN}m")
+        if (session.totalDurationMin < thresholdMin) {
+            Log.d(TAG, "Skipping /nudge: session total ${session.totalDurationMin}m is under ${thresholdMin}m")
             return Result.success()
         }
         val now = System.currentTimeMillis()
@@ -129,9 +134,18 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         )
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Nudges", NotificationManager.IMPORTANCE_DEFAULT))
+            val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .build()
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Nudges", NotificationManager.IMPORTANCE_HIGH).apply {
+                    setSound(soundUri, audioAttributes)
+                    enableVibration(true)
+                },
+            )
             val channel = manager.getNotificationChannel(CHANNEL_ID)
-            Log.d(TAG, "Nudges channel: exists=${channel != null}, importance=${channelImportance(channel?.importance)}")
+            Log.d(TAG, "Nudges channel: exists=${channel != null}, importance=${channelImportance(channel?.importance)}, sound=${channel?.sound}, vibration=${channel?.shouldVibrate()}")
         }
         val intent = Intent(applicationContext, MainActivity::class.java)
             .putExtra(EXTRA_NUDGE_MESSAGE, nudge.message)
@@ -157,10 +171,12 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
     private companion object {
         const val TAG = "NudgeWorker"
-        // TEMPORARY TESTING VALUE: revert to 30 before any release or real-world use.
+        const val PRODUCTION_THRESHOLD_MIN = 30
+        const val PRODUCTION_COOLDOWN_MIN = 30
+        // TEMPORARY TESTING VALUE: debug builds only; remove before real-world testing.
         const val TESTING_THRESHOLD_MIN = 5
-        const val COOLDOWN_MS = 30 * 60_000L
-        const val CHANNEL_ID = "nudges"
+        const val COOLDOWN_MS = PRODUCTION_COOLDOWN_MIN * 60_000L
+        const val CHANNEL_ID = "nudges_v2"
         const val NOTIFICATION_ID = 1
     }
 

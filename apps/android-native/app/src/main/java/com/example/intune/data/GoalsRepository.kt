@@ -28,6 +28,10 @@ class GoalsRepository(private val context: Context) {
         context.goalDataStore.edit { it[lastNotifiedAtKey] = timestamp }
     }
 
+    suspend fun clearLastNotifiedAt() {
+        context.goalDataStore.edit { it.remove(lastNotifiedAtKey) }
+    }
+
     suspend fun saveSoundEnabled(enabled: Boolean) {
         context.goalDataStore.edit { it[soundEnabledKey] = enabled }
     }

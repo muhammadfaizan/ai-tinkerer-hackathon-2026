@@ -362,7 +362,10 @@ fun HomeScreen(
             items(goals) { GoalChip(it) }
             item { Text("Demo Mode", style = MaterialTheme.typography.titleLarge) }
             item { Text("Background checks run about every 15 minutes; Android does not guarantee an exact time.") }
-            if (BuildConfig.DEBUG) item { Button(onClick = { Log.d("NudgeWorker", "Trigger check now button tapped"); triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
+            if (BuildConfig.DEBUG) {
+                item { Button(onClick = { Log.d("NudgeWorker", "Trigger check now button tapped"); triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
+                item { TextButton(onClick = { scope.launch { GoalsRepository(context).clearLastNotifiedAt(); Log.d("NudgeWorker", "Debug cooldown reset") } }, Modifier.fillMaxWidth()) { Text("Reset cooldown") } }
+            }
             items(scenarios) { scenario ->
                 Button(onClick = {
                     status = "Checking…"
