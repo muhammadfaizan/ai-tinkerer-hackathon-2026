@@ -19,17 +19,22 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.intune.MainActivity
 import com.example.intune.R
-import com.example.intune.data.ActivityPayload
 import com.example.intune.data.GoalsRepository
 import com.example.intune.data.NudgeRequest
 import com.example.intune.data.NudgeResponse
+import com.example.intune.data.SessionAppPayload
+import com.example.intune.data.SessionPayload
 import com.example.intune.data.createNudgeApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
-import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        if (isStopped) {
+            Log.d(TAG, "Worker was already stopped; skipping work")
+            return Result.failure()
+        }
         val usageAccessGranted = UsageAccess.isGranted(applicationContext)
         Log.d(TAG, "Usage access granted: $usageAccessGranted")
         if (!usageAccessGranted) {
@@ -38,39 +43,46 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         }
         val repository = GoalsRepository(applicationContext)
         val goals = repository.goals.first()
-        val app = UsageStatsHelper(applicationContext).currentApp()
-        if (app == null) {
-            Log.d(TAG, "Foreground app: none detected; skipping /nudge")
-            return Result.success()
-        }
-        Log.d(TAG, "Foreground app: package=${app.packageName}, label=${app.label}, category=${app.category ?: "none"}")
-        Log.d(TAG, "Foreground duration: ${app.durationMin} minutes")
-        val lastChecked = repository.lastCheckedPackage()
-        val isSameApp = app.packageName == lastChecked
-        Log.d(TAG, "Last checked app: ${lastChecked ?: "none"}; same app: $isSameApp")
-        val meetsDurationThreshold = app.durationMin > 2
-        Log.d(TAG, "Two-minute threshold met: $meetsDurationThreshold")
+        val session = UsageStatsHelper(applicationContext).sessionSummary()
         if (goals.isEmpty()) {
             Log.d(TAG, "Skipping /nudge: no goals are stored")
             return Result.success()
         }
-        if (!meetsDurationThreshold) {
-            Log.d(TAG, "Skipping /nudge: foreground duration is not over 2 minutes")
+        if (session.apps.isEmpty()) {
+            Log.d(TAG, "Skipping /nudge: no meaningful app usage in the session")
             return Result.success()
         }
-        if (isSameApp) {
-            Log.d(TAG, "Skipping /nudge: foreground app matches the last checked app")
+        // A 30-minute rolling window cannot contain more than 30 minutes of foreground use.
+        if (session.totalDurationMin < SESSION_THRESHOLD_MIN) {
+            Log.d(TAG, "Skipping /nudge: session total ${session.totalDurationMin}m is under ${SESSION_THRESHOLD_MIN}m")
+            return Result.success()
+        }
+        val now = System.currentTimeMillis()
+        if (now - repository.lastNotifiedAt() < COOLDOWN_MS) {
+            Log.d(TAG, "Skipping /nudge: session cooldown is active")
             return Result.success()
         }
 
-        val request = NudgeRequest(goals, ActivityPayload(app.label, app.durationMin, timeOfDay(), app.category))
+        val request = NudgeRequest(
+            goals = goals,
+            session = SessionPayload(session.apps.map { SessionAppPayload(it.label, it.durationMin) }, session.totalDurationMin),
+        )
         Log.d(TAG, "Calling /nudge with request: $request")
-        val response = runCatching { createNudgeApi().nudge(request) }.getOrElse {
-            Log.e(TAG, "Calling /nudge failed; retrying", it)
+        val response = try {
+            createNudgeApi().nudge(request)
+        } catch (error: CancellationException) {
+            Log.d(TAG, "Network call cancelled because WorkManager stopped the worker")
+            throw error
+        } catch (error: Exception) {
+            Log.e(TAG, "Calling /nudge failed; retrying", error)
             return Result.retry()
         }
+        if (isStopped) {
+            Log.d(TAG, "Worker was stopped after /nudge returned")
+            return Result.failure()
+        }
         Log.d(TAG, "Received /nudge response: $response")
-        repository.saveLastCheckedPackage(app.packageName)
+        repository.saveLastNotifiedAt(now)
         if (response.shouldNotify) {
             Log.d(TAG, "Response requires notification")
             notify(response)
@@ -78,13 +90,6 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             Log.d(TAG, "Response does not require notification")
         }
         return Result.success()
-    }
-
-    private fun timeOfDay(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-        in 5..11 -> "morning"
-        in 12..16 -> "afternoon"
-        in 17..20 -> "evening"
-        else -> "night"
     }
 
     private fun notify(nudge: NudgeResponse) {
@@ -112,6 +117,8 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 
     private companion object {
         const val TAG = "NudgeWorker"
+        const val SESSION_THRESHOLD_MIN = 30
+        const val COOLDOWN_MS = 30 * 60_000L
         const val CHANNEL_ID = "nudges"
         const val NOTIFICATION_ID = 1
     }
@@ -128,7 +135,7 @@ fun scheduleNudgeWork(context: Context) {
 fun triggerNudgeCheckNow(context: Context) {
     WorkManager.getInstance(context).enqueueUniqueWork(
         "nudge-check-debug",
-        ExistingWorkPolicy.REPLACE,
+        ExistingWorkPolicy.KEEP,
         OneTimeWorkRequestBuilder<NudgeWorker>().build(),
     )
 }

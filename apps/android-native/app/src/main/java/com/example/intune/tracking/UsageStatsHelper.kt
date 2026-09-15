@@ -3,56 +3,68 @@ package com.example.intune.tracking
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.util.Log
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-data class ForegroundApp(val packageName: String, val label: String, val category: String?, val durationMin: Int)
+data class SessionApp(val packageName: String, val label: String, val durationMin: Int)
+data class UsageSession(val apps: List<SessionApp>, val totalDurationMin: Int)
 
 class UsageStatsHelper(private val context: Context) {
-    fun currentApp(now: Long = System.currentTimeMillis()): ForegroundApp? {
-        val beginTime = now - DAY_MS
-        Log.d(TAG, "queryEvents window: ${formatTime(beginTime)} to ${formatTime(now)} (last 24 hours)")
+    fun sessionSummary(now: Long = System.currentTimeMillis()): UsageSession {
+        val beginTime = now - WINDOW_MS
+        val launcherPackage = context.packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )?.activityInfo?.packageName
+        val durations = linkedMapOf<String, Long>()
+        var activePackage: String? = null
+        var activeStartedAt = 0L
+        fun closeActive(at: Long) {
+            val packageName = activePackage ?: return
+            durations[packageName] = (durations[packageName] ?: 0L) + (at - activeStartedAt).coerceAtLeast(0)
+            activePackage = null
+        }
+
         val events = context.getSystemService(UsageStatsManager::class.java).queryEvents(beginTime, now)
-        var packageName: String? = null
-        var startedAt = 0L
-        var eventCount = 0
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
-            eventCount++
-            Log.d(TAG, "Event #$eventCount: ${eventTypeName(event.eventType)} (${event.eventType}), package=${event.packageName ?: "none"}, at=${formatTime(event.timeStamp)}")
-            if (event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
-                packageName = event.packageName
-                startedAt = event.timeStamp
+            when (event.eventType) {
+                UsageEvents.Event.MOVE_TO_FOREGROUND -> {
+                    closeActive(event.timeStamp)
+                    val packageName = event.packageName
+                    if (packageName != null && packageName != context.packageName && packageName != launcherPackage) {
+                        activePackage = packageName
+                        activeStartedAt = event.timeStamp
+                    }
+                }
+                UsageEvents.Event.MOVE_TO_BACKGROUND -> {
+                    if (event.packageName == activePackage) closeActive(event.timeStamp)
+                }
             }
         }
-        if (eventCount == 0) Log.d(TAG, "queryEvents returned zero events")
-        if (packageName == null) Log.d(TAG, "No MOVE_TO_FOREGROUND or ACTIVITY_RESUMED event was found")
-        if (packageName == context.packageName) Log.d(TAG, "Most recent foreground event belongs to this app; ignoring it")
-        val name = packageName?.takeUnless { it == context.packageName } ?: return null
-        val appInfo = runCatching { context.packageManager.getApplicationInfo(name, 0) }.getOrNull()
-        val label = runCatching { appInfo?.let { context.packageManager.getApplicationLabel(it).toString() } }.getOrNull() ?: name
-        return ForegroundApp(name, label, appInfo?.categoryName(), ((now - startedAt) / MINUTE_MS).toInt())
+        closeActive(now)
+
+        val apps = durations.mapNotNull { (packageName, durationMs) ->
+            val durationMin = (durationMs / MINUTE_MS).toInt()
+            if (durationMin == 0) null else SessionApp(packageName, appLabel(packageName), durationMin)
+        }
+        val totalDurationMin = (durations.values.sum() / MINUTE_MS).toInt()
+        Log.d(TAG, "Session: ${apps.joinToString { "${it.label} ${it.durationMin}m" }}, total=${totalDurationMin}m")
+        return UsageSession(apps, totalDurationMin)
     }
 
-    private fun ApplicationInfo.categoryName(): String? = if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) null else readableCategory(category)
+    private fun appLabel(packageName: String): String = runCatching {
+        context.packageManager.getApplicationInfo(packageName, 0).let { context.packageManager.getApplicationLabel(it).toString() }
+    }.getOrDefault(packageName)
 
     private companion object {
         const val TAG = "UsageStatsHelper"
         const val MINUTE_MS = 60_000L
-        const val DAY_MS = 24 * 60 * MINUTE_MS
+        const val WINDOW_MS = 30 * MINUTE_MS
     }
-}
-
-private fun formatTime(time: Long): String = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date(time))
-
-private fun eventTypeName(type: Int): String = when (type) {
-    UsageEvents.Event.MOVE_TO_FOREGROUND -> "MOVE_TO_FOREGROUND/ACTIVITY_RESUMED"
-    UsageEvents.Event.MOVE_TO_BACKGROUND -> "MOVE_TO_BACKGROUND/ACTIVITY_PAUSED"
-    else -> "OTHER"
 }
 
 internal fun readableCategory(category: Int): String? = when (category) {

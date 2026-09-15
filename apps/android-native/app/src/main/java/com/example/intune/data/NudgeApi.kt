@@ -15,7 +15,13 @@ data class ActivityPayload(
     val timeOfDay: String,
     val category: String? = null,
 )
-data class NudgeRequest(val goals: List<String>, val activity: ActivityPayload)
+data class SessionAppPayload(val app: String, val durationMin: Int)
+data class SessionPayload(val apps: List<SessionAppPayload>, val totalDurationMin: Int, val windowMin: Int = 30)
+data class NudgeRequest(
+    val goals: List<String>,
+    val activity: ActivityPayload? = null,
+    val session: SessionPayload? = null,
+)
 data class NudgeResponse(
     val classification: String,
     val shouldNotify: Boolean,

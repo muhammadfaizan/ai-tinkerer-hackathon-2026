@@ -16,15 +16,16 @@ const parseJson = (value) => {
   return JSON.parse(match ? match[0] : value);
 };
 const activitySummary = (activity) => `${activity.app} for ${activity.durationMin ?? 'an unknown number of'} minutes at ${activity.timeOfDay ?? 'an unknown time'}`;
+const sessionSummary = (session) => `${session.apps.map(({ app, durationMin }) => `${app} for ${durationMin} minutes`).join(', ')} in the last ${session.windowMin ?? 30} minutes (total: ${session.totalDurationMin} minutes)`;
 
-async function classify(goals, activity, habits = '') {
+async function classify(goals, activity, session, habits = '') {
   const fallback = { classification: 'ambiguous', reasoning: 'Classification was unavailable, so the activity needs cautious review.' };
-  const activityContext = [
+  const activityContext = activity ? [
     `App: ${activity.app}`,
     `Duration: ${activity.durationMin ?? 'unknown'} minutes`,
     `Time of day: ${activity.timeOfDay ?? 'unknown'}`,
     typeof activity.category === 'string' && activity.category.trim() ? `Category: ${activity.category.trim()}` : null
-  ].filter(Boolean).join('\n');
+  ].filter(Boolean).join('\n') : `Session: ${sessionSummary(session)}`;
   try {
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
@@ -42,7 +43,7 @@ async function classify(goals, activity, habits = '') {
   }
 }
 
-async function ground(goals, activity) {
+async function ground(goals, activity, session) {
   try {
     if (!process.env.EXA_API_KEY) {
       console.warn('[ground] Exa skipped: EXA_API_KEY is not configured.');
@@ -50,7 +51,7 @@ async function ground(goals, activity) {
     }
 
     const exa = new Exa(process.env.EXA_API_KEY);
-    const query = `Is ${activitySummary(activity)} plausibly useful toward these goals: ${goals.join(', ')}?`;
+    const query = `Is ${activity ? activitySummary(activity) : sessionSummary(session)} plausibly useful toward these goals: ${goals.join(', ')}?`;
     let timeoutId;
     try {
       const response = await Promise.race([
@@ -77,13 +78,13 @@ async function ground(goals, activity) {
   }
 }
 
-async function decide(goals, activity, habits, classification, grounding) {
+async function decide(goals, activity, session, habits, classification, grounding) {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.6', reasoning: { effort: 'low' }, max_output_tokens: 300,
-      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. Personalize recommendations using the supplied habits only when relevant; never invent habits. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
-      input: JSON.stringify({ goals, activity, habits, classification, grounding }),
+      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. When a session is supplied, assess the combined app list and total duration rather than treating it as one app. Personalize recommendations using the supplied habits only when relevant; never invent habits. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
+      input: JSON.stringify({ goals, activity, session, habits, classification, grounding }),
       text: { format: { type: 'json_schema', name: 'nudge_decision', strict: true, schema: { type: 'object', additionalProperties: false, properties: { shouldNotify: { type: 'boolean' }, message: { type: 'string' }, microAction: { type: 'string' } }, required: ['shouldNotify', 'message', 'microAction'] } } }
     });
     return { ...parseJson(response.output_text), error: false };
@@ -94,11 +95,13 @@ async function decide(goals, activity, habits, classification, grounding) {
 }
 
 app.post('/nudge', async (req, res) => {
-  const { goals, activity, habits = '' } = req.body || {};
-  if (!Array.isArray(goals) || !goals.length || !activity || typeof activity.app !== 'string') return res.status(400).json({ error: 'Provide non-empty goals and an activity with an app.' });
-  const stageOne = await classify(goals, activity, habits);
-  const grounding = stageOne.classification === 'ambiguous' ? await ground(goals, activity) : [];
-  const decision = await decide(goals, activity, habits, stageOne, grounding);
+  const { goals, activity, session, habits = '' } = req.body || {};
+  const validActivity = activity && typeof activity.app === 'string';
+  const validSession = session && Array.isArray(session.apps) && session.apps.length && typeof session.totalDurationMin === 'number';
+  if (!Array.isArray(goals) || !goals.length || (!validActivity && !validSession)) return res.status(400).json({ error: 'Provide non-empty goals and either an activity with an app or a session with apps.' });
+  const stageOne = await classify(goals, activity, session, habits);
+  const grounding = stageOne.classification === 'ambiguous' ? await ground(goals, activity, session) : [];
+  const decision = await decide(goals, activity, session, habits, stageOne, grounding);
   res.json({ classification: stageOne.classification, shouldNotify: decision.shouldNotify, message: decision.message, microAction: decision.microAction, groundingUsed: grounding.length > 0, ...(decision.error ? { error: true } : {}) });
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));
