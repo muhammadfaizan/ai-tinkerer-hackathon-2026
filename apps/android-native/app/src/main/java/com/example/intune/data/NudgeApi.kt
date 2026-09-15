@@ -17,10 +17,12 @@ data class ActivityPayload(
 )
 data class SessionAppPayload(val app: String, val durationMin: Int)
 data class SessionPayload(val apps: List<SessionAppPayload>, val totalDurationMin: Int, val windowMin: Int = 30)
+data class RoutineContextPayload(val label: String, val dayPattern: String, val approxStartHour: Int, val approxEndHour: Int)
 data class NudgeRequest(
     val goals: List<String>,
     val activity: ActivityPayload? = null,
     val session: SessionPayload? = null,
+    val routineContext: List<RoutineContextPayload>? = null,
 )
 data class NudgeResponse(
     val classification: String,

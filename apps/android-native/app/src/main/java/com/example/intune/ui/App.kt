@@ -80,6 +80,7 @@ import com.example.intune.data.ActionTaken
 import com.example.intune.data.ActivityPayload
 import com.example.intune.data.GoalsRepository
 import com.example.intune.data.NudgeDao
+import com.example.intune.data.NudgeDatabase
 import com.example.intune.data.NudgeRecord
 import com.example.intune.data.NudgeRequest
 import com.example.intune.data.NudgeResponse
@@ -87,8 +88,14 @@ import com.example.intune.data.NudgeSource
 import com.example.intune.data.PendingNudge
 import com.example.intune.data.NudgeApi
 import com.example.intune.data.ParseGoalsRequest
+import com.example.intune.data.RoutineDao
+import com.example.intune.data.RoutineProfile
+import com.example.intune.data.RoutineStatus
 import com.example.intune.tracking.UsageAccess
+import com.example.intune.tracking.ActivityTransitions
 import com.example.intune.tracking.scheduleNudgeWork
+import com.example.intune.tracking.scheduleRoutineAnalysis
+import com.example.intune.tracking.triggerRoutineAnalysisNow
 import com.example.intune.tracking.triggerNudgeCheckNow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -101,6 +108,7 @@ private const val PERMISSION = "permission"
 private const val HOME = "home"
 private const val PROGRESS = "progress"
 private const val EDIT_GOALS = "edit-goals"
+private const val ROUTINE_PERMISSION = "routine-permission"
 private val screenPadding = 16.dp
 private enum class VoiceState { LISTENING, PROCESSING }
 
@@ -116,13 +124,19 @@ fun GoalAwareApp(
     val context = LocalContext.current
     val goals by repository.goals.collectAsState(initial = null)
     val soundEnabled by repository.soundEnabled.collectAsState(initial = true)
+    val routinePermissionPrompted by repository.routinePermissionPrompted.collectAsState(initial = false)
     val navController = rememberNavController()
     var usageAccessGranted by remember { mutableStateOf(UsageAccess.isGranted(context)) }
+    var activityRecognitionGranted by remember { mutableStateOf(ActivityTransitions.isGranted(context)) }
+    val routineDao = remember(context) { NudgeDatabase.get(context).routineDao() }
     val lifecycleOwner = LocalLifecycleOwner.current
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) usageAccessGranted = UsageAccess.isGranted(context)
+            if (event == Lifecycle.Event.ON_RESUME) {
+                usageAccessGranted = UsageAccess.isGranted(context)
+                activityRecognitionGranted = ActivityTransitions.isGranted(context)
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -132,6 +146,12 @@ fun GoalAwareApp(
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    LaunchedEffect(activityRecognitionGranted) {
+        if (activityRecognitionGranted) {
+            ActivityTransitions.register(context)
+            scheduleRoutineAnalysis(context)
+        }
+    }
     CoachBackground {
     goals?.let { savedGoals ->
         LaunchedEffect(savedGoals, usageAccessGranted) {
@@ -139,8 +159,9 @@ fun GoalAwareApp(
         }
         NavHost(navController, startDestination = when {
             savedGoals.isEmpty() -> ONBOARDING
-            usageAccessGranted -> HOME
-            else -> PERMISSION
+            !usageAccessGranted -> PERMISSION
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !activityRecognitionGranted && !routinePermissionPrompted -> ROUTINE_PERMISSION
+            else -> HOME
         }) {
             composable(ONBOARDING) {
                 OnboardingScreen(api, scope) { enteredGoals ->
@@ -151,9 +172,18 @@ fun GoalAwareApp(
                 }
             }
             composable(PERMISSION) { PermissionScreen { UsageAccess.openSettings(context) } }
+            composable(ROUTINE_PERMISSION) {
+                ActivityRecognitionPermissionScreen(
+                    onPermissionResult = { granted ->
+                        activityRecognitionGranted = granted
+                        scope.launch { repository.markRoutinePermissionPrompted() }
+                    },
+                    onSkip = { scope.launch { repository.markRoutinePermissionPrompted() } },
+                )
+            }
             composable(HOME) {
                 HomeScreen(
-                    goals = savedGoals, api = api, dao = dao, scope = scope, soundEnabled = soundEnabled,
+                    goals = savedGoals, api = api, dao = dao, routineDao = routineDao, scope = scope, soundEnabled = soundEnabled,
                     notificationNudge = notificationNudge, onNotificationNudgeShown = onNotificationNudgeShown,
                     onEdit = { navController.navigate(EDIT_GOALS) { launchSingleTop = true } },
                     onProgress = { navController.navigate(PROGRESS) { launchSingleTop = true } },
@@ -171,12 +201,16 @@ fun GoalAwareApp(
                 }
             }
         }
-        LaunchedEffect(usageAccessGranted, savedGoals.isNotEmpty()) {
+        LaunchedEffect(usageAccessGranted, activityRecognitionGranted, routinePermissionPrompted, savedGoals.isNotEmpty()) {
             val route = navController.currentDestination?.route
-            if (savedGoals.isNotEmpty() && usageAccessGranted && route == PERMISSION) {
-                navController.navigate(HOME) { popUpTo(PERMISSION) { inclusive = true } }
-            } else if (savedGoals.isNotEmpty() && !usageAccessGranted && (route == HOME || route == PROGRESS)) {
-                navController.navigate(PERMISSION)
+            val target = when {
+                savedGoals.isEmpty() -> ONBOARDING
+                !usageAccessGranted -> PERMISSION
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && !activityRecognitionGranted && !routinePermissionPrompted -> ROUTINE_PERMISSION
+                else -> HOME
+            }
+            if (route != target && (route == PERMISSION || route == ROUTINE_PERMISSION || route == HOME || route == PROGRESS)) {
+                navController.navigate(target) { launchSingleTop = true }
             }
         }
     } ?: LoadingScreen()
@@ -208,6 +242,19 @@ fun PermissionScreen(onOpenSettings: () -> Unit) = CoachScaffold("Usage access")
         Text("To give you real nudges, this app needs to see which apps you're using — nothing leaves your device.")
         Text("Android requires you to enable this manually in Settings.")
         Button(onClick = onOpenSettings) { Text("Open usage access settings") }
+    }
+}
+
+@Composable
+private fun ActivityRecognitionPermissionScreen(onPermissionResult: (Boolean) -> Unit, onSkip: () -> Unit) {
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission(), onPermissionResult)
+    CoachScaffold("Routine detection") { innerPadding ->
+        Column(Modifier.fillMaxSize().padding(innerPadding).padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+            Text("Notice routines without tracking location", style = MaterialTheme.typography.headlineSmall)
+            Text("This only detects whether you're walking, in a vehicle, cycling, or still. It never collects your location, destination, coordinates, or maps.")
+            Button(onClick = { launcher.launch(Manifest.permission.ACTIVITY_RECOGNITION) }) { Text("Allow activity detection") }
+            TextButton(onClick = onSkip) { Text("Not now") }
+        }
     }
 }
 
@@ -328,6 +375,7 @@ fun HomeScreen(
     goals: List<String>,
     api: NudgeApi,
     dao: NudgeDao,
+    routineDao: RoutineDao,
     scope: CoroutineScope,
     soundEnabled: Boolean,
     notificationNudge: PendingNudge? = null,
@@ -343,6 +391,8 @@ fun HomeScreen(
     )
     var shownNudge by remember { mutableStateOf<ShownNudge?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+    var pendingRoutine by remember { mutableStateOf<RoutineProfile?>(null) }
+    LaunchedEffect(Unit) { pendingRoutine = routineDao.nextPending() }
     LaunchedEffect(notificationNudge) {
         notificationNudge?.let { pending ->
             val alreadyActioned = pending.recordId > 0 && dao.getActionTaken(pending.recordId)?.let { it != ActionTaken.NONE } == true
@@ -368,6 +418,7 @@ fun HomeScreen(
             if (BuildConfig.DEBUG) {
                 item { Button(onClick = { Log.d("NudgeWorker", "Trigger check now button tapped"); triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
                 item { TextButton(onClick = { scope.launch { GoalsRepository(context).clearLastNotifiedAt(); Log.d("NudgeWorker", "Debug cooldown reset") } }, Modifier.fillMaxWidth()) { Text("Reset cooldown") } }
+                item { TextButton(onClick = { triggerRoutineAnalysisNow(context) }, Modifier.fillMaxWidth()) { Text("Analyze routines now") } }
             }
             items(scenarios) { scenario ->
                 Button(onClick = {
@@ -394,7 +445,36 @@ fun HomeScreen(
                 shownNudge = null
             } } }
         }
+        pendingRoutine?.let { routine -> RoutineReviewDialog(routine) { status, label ->
+            scope.launch {
+                routineDao.updateProfile(routine.id, status, label)
+                pendingRoutine = routineDao.nextPending()
+            }
+        } }
     }
+}
+
+@Composable
+private fun RoutineReviewDialog(profile: RoutineProfile, onAnswer: (RoutineStatus, String?) -> Unit) {
+    val activity = when (profile.activityType.name) {
+        "IN_VEHICLE" -> "in a vehicle"
+        "WALKING" -> "walking"
+        else -> profile.activityType.name.lowercase()
+    }
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("A possible routine") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Looks like you're often $activity around ${profile.approxStartHour}:00–${profile.approxEndHour}:00 on weekdays — what's this usually for?")
+                listOf("Commute to work", "School drop-off", "Exercise/walk", "Other").forEach { label ->
+                    AssistChip(onClick = { onAnswer(RoutineStatus.LABELED, label) }, label = { Text(label) })
+                }
+                TextButton(onClick = { onAnswer(RoutineStatus.DISMISSED, null) }) { Text("Not a real pattern") }
+            }
+        },
+        confirmButton = {},
+    )
 }
 
 @Composable

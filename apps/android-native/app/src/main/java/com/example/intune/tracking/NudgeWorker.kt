@@ -34,6 +34,7 @@ import com.example.intune.data.NudgeRecord
 import com.example.intune.data.NudgeSource
 import com.example.intune.data.SessionAppPayload
 import com.example.intune.data.SessionPayload
+import com.example.intune.data.RoutineContextPayload
 import com.example.intune.data.createNudgeApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -75,9 +76,13 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             return Result.success()
         }
 
+        val routineContext = NudgeDatabase.get(applicationContext).routineDao().labeled().mapNotNull { profile ->
+            profile.label?.let { RoutineContextPayload(it, profile.dayPattern, profile.approxStartHour, profile.approxEndHour) }
+        }.takeIf { it.isNotEmpty() }
         val request = NudgeRequest(
             goals = goals,
             session = SessionPayload(session.apps.map { SessionAppPayload(it.label, it.durationMin) }, session.totalDurationMin),
+            routineContext = routineContext,
         )
         Log.d(TAG, "Calling /nudge with request: $request")
         val response = try {
