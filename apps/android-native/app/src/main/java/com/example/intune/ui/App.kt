@@ -6,13 +6,29 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DirectionsRun
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Savings
+import androidx.compose.material.icons.outlined.Stars
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -33,9 +49,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -60,6 +80,7 @@ import com.example.intune.tracking.scheduleNudgeWork
 import com.example.intune.tracking.triggerNudgeCheckNow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 
@@ -80,6 +101,7 @@ fun GoalAwareApp(
 ) {
     val context = LocalContext.current
     val goals by repository.goals.collectAsState(initial = null)
+    val soundEnabled by repository.soundEnabled.collectAsState(initial = true)
     val navController = rememberNavController()
     var usageAccessGranted by remember { mutableStateOf(UsageAccess.isGranted(context)) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -96,6 +118,7 @@ fun GoalAwareApp(
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    CoachBackground {
     goals?.let { savedGoals ->
         LaunchedEffect(savedGoals, usageAccessGranted) {
             if (savedGoals.isNotEmpty() && usageAccessGranted) scheduleNudgeWork(context)
@@ -115,12 +138,14 @@ fun GoalAwareApp(
             }
             composable(PERMISSION) { PermissionScreen { UsageAccess.openSettings(context) } }
             composable(HOME) {
-                HomeScreen(savedGoals, api, dao, scope, notificationNudge, onNotificationNudgeShown) {
+                HomeScreen(savedGoals, api, dao, scope, soundEnabled, notificationNudge, onNotificationNudgeShown) {
                     navController.navigate(PROGRESS) { launchSingleTop = true }
                 }
             }
             composable(PROGRESS) {
-                ProgressScreen(dao) { navController.navigate(HOME) { launchSingleTop = true } }
+                ProgressScreen(dao, soundEnabled, { enabled -> scope.launch { repository.saveSoundEnabled(enabled) } }) {
+                    navController.navigate(HOME) { launchSingleTop = true }
+                }
             }
         }
         LaunchedEffect(usageAccessGranted, savedGoals.isNotEmpty()) {
@@ -131,18 +156,22 @@ fun GoalAwareApp(
                 navController.navigate(PERMISSION)
             }
         }
+    } ?: LoadingScreen()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CoachScaffold(title: String, selectedRoute: String? = null, onHome: (() -> Unit)? = null, onProgress: (() -> Unit)? = null, content: @Composable (PaddingValues) -> Unit) {
+private fun CoachScaffold(title: String, selectedRoute: String? = null, onHome: (() -> Unit)? = null, onProgress: (() -> Unit)? = null, soundEnabled: Boolean = true, content: @Composable (PaddingValues) -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    val sounds = rememberCoachSounds()
     Scaffold(
-        topBar = { TopAppBar(title = { Text(title) }) },
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        topBar = { TopAppBar(title = { Text(title) }, colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)) },
         bottomBar = {
             if (selectedRoute != null) NavigationBar {
-                NavigationBarItem(selected = selectedRoute == HOME, onClick = { onHome?.invoke() }, icon = { Text("⌂") }, label = { Text("Home") })
-                NavigationBarItem(selected = selectedRoute == PROGRESS, onClick = { onProgress?.invoke() }, icon = { Text("★") }, label = { Text("Progress") })
+                NavigationBarItem(selected = selectedRoute == HOME, onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onHome?.invoke() }, icon = { Text("⌂") }, label = { Text("Home") })
+                NavigationBarItem(selected = selectedRoute == PROGRESS, onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onProgress?.invoke() }, icon = { Text("★") }, label = { Text("Progress") })
             }
         },
         content = content,
@@ -161,6 +190,7 @@ fun PermissionScreen(onOpenSettings: () -> Unit) = CoachScaffold("Usage access")
 
 @Composable
 fun OnboardingScreen(onSave: (List<String>) -> Unit) {
+    val haptic = LocalHapticFeedback.current
     var text by remember { mutableStateOf("") }
     val goals = remember { mutableStateListOf<String>() }
     CoachScaffold("Welcome") { innerPadding ->
@@ -168,8 +198,9 @@ fun OnboardingScreen(onSave: (List<String>) -> Unit) {
             Text("What would you like to improve?", style = MaterialTheme.typography.headlineSmall)
             Text("Add up to three goals in plain language.")
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("A goal") })
-            Button(onClick = { goals += text.trim(); text = "" }, enabled = text.isNotBlank() && goals.size < 3) { Text("Add goal") }
-            goals.forEach { Text("• $it") }
+            Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); goals += text.trim(); text = "" }, enabled = text.isNotBlank() && goals.size < 3) { Text("Add goal") }
+            goals.forEach { GoalChip(it) }
+            TrustBadge()
             Button(onClick = { onSave(goals) }, enabled = goals.isNotEmpty()) { Text("Save goals") }
         }
     }
@@ -184,6 +215,7 @@ fun HomeScreen(
     api: NudgeApi,
     dao: NudgeDao,
     scope: CoroutineScope,
+    soundEnabled: Boolean,
     notificationNudge: PendingNudge? = null,
     onNotificationNudgeShown: () -> Unit = {},
     onProgress: () -> Unit,
@@ -206,10 +238,10 @@ fun HomeScreen(
             onNotificationNudgeShown()
         }
     }
-    CoachScaffold("Goal Coach", HOME, onHome = {}, onProgress = onProgress) { innerPadding ->
+    CoachScaffold("Goal Coach", HOME, onHome = {}, onProgress = onProgress, soundEnabled = soundEnabled) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize().padding(innerPadding), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
             item { Text("Your goals", style = MaterialTheme.typography.titleLarge) }
-            items(goals) { Text("• $it") }
+            items(goals) { GoalChip(it) }
             item { Text("Demo Mode", style = MaterialTheme.typography.titleLarge) }
             item { Text("Background checks run about every 15 minutes; Android does not guarantee an exact time.") }
             if (BuildConfig.DEBUG) item { Button(onClick = { triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
@@ -233,7 +265,7 @@ fun HomeScreen(
                 }, Modifier.fillMaxWidth()) { Text(scenario.label) }
             }
             status?.let { item { Text(it) } }
-            shownNudge?.let { shown -> item { NudgeCard(shown.nudge) { action ->
+            shownNudge?.let { shown -> item { NudgeCard(shown.nudge, soundEnabled) { action ->
                 scope.launch { dao.updateActionTaken(shown.recordId, action) }
                 shownNudge = null
             } } }
@@ -242,27 +274,49 @@ fun HomeScreen(
 }
 
 @Composable
-fun NudgeCard(nudge: NudgeResponse, onAction: (ActionTaken) -> Unit) {
-    ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, elevation = CardDefaults.elevatedCardElevation()) {
-        Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-            Text(nudge.message, style = MaterialTheme.typography.titleMedium)
-            Text(nudge.microAction)
-            Button(onClick = { Log.d("Nudge", "accepted"); onAction(ActionTaken.ACCEPTED) }) { Text("Accept") }
-            TextButton(onClick = { Log.d("Nudge", "dismissed"); onAction(ActionTaken.DISMISSED) }) { Text("Dismiss") }
-            TextButton(onClick = { Log.d("Nudge", "working"); onAction(ActionTaken.ALREADY_ALIGNED) }) { Text("Actually, I'm working") }
+fun NudgeCard(nudge: NudgeResponse, soundEnabled: Boolean, onAction: (ActionTaken) -> Unit) {
+    val haptic = LocalHapticFeedback.current
+    val sounds = rememberCoachSounds()
+    val scope = rememberCoroutineScope()
+    var visible by remember { mutableStateOf(true) }
+    var celebrating by remember { mutableStateOf(false) }
+    val bonus by animateIntAsState(if (celebrating) 10 else 0, tween(550), label = "points")
+    AnimatedVisibility(visible, exit = fadeOut(tween(220)) + scaleOut(targetScale = 0.92f, animationSpec = tween(220))) {
+        ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, elevation = CardDefaults.elevatedCardElevation()) {
+            Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+                Text(nudge.message, style = MaterialTheme.typography.titleMedium)
+                Text(nudge.microAction)
+                if (celebrating) {
+                    CelebrationBurst(Modifier.fillMaxWidth().size(120.dp))
+                    Text("+$bonus points", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                Button(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress); sounds.accept(soundEnabled); celebrating = true
+                    scope.launch { delay(700); visible = false; delay(220); onAction(ActionTaken.ACCEPTED) }
+                }) { Text("Accept") }
+                TextButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.dismiss(soundEnabled); visible = false
+                    scope.launch { delay(180); onAction(ActionTaken.DISMISSED) }
+                }) { Text("Dismiss") }
+                TextButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.dismiss(soundEnabled); visible = false
+                    scope.launch { delay(180); onAction(ActionTaken.ALREADY_ALIGNED) }
+                }) { Text("Actually, I'm working") }
+            }
         }
     }
 }
 
 @Composable
-fun ProgressScreen(dao: NudgeDao, onHome: () -> Unit) {
+fun ProgressScreen(dao: NudgeDao, soundEnabled: Boolean, onSoundChange: (Boolean) -> Unit, onHome: () -> Unit) {
     val records by dao.getAllRecords().collectAsState(emptyList())
     val points by dao.getTotalPoints().collectAsState(0)
     val streak by dao.getCurrentStreak().collectAsState(0)
     val accepted by dao.getAcceptedCount().collectAsState(0)
     val total by dao.getTotalCount().collectAsState(0)
     val formatter = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
-    CoachScaffold("Progress", PROGRESS, onHome = onHome, onProgress = {}) { innerPadding ->
+    var showTrustDialog by remember { mutableStateOf(false) }
+    CoachScaffold("Progress", PROGRESS, onHome = onHome, onProgress = {}, soundEnabled = soundEnabled) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize().padding(innerPadding), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
             item {
                 ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
@@ -270,10 +324,21 @@ fun ProgressScreen(dao: NudgeDao, onHome: () -> Unit) {
                         Text("🔥 $streak day streak", style = MaterialTheme.typography.headlineSmall)
                         Text("$points points · Level ${points / 100 + 1}")
                         Text("$accepted accepted out of $total nudges")
+                        GrowthMark(points / 100 + 1, Modifier.size(84.dp))
                     }
                 }
             }
-            item { Text("History", style = MaterialTheme.typography.titleLarge) }
+            item {
+                TextButton(onClick = { showTrustDialog = true }) { Text("🔒 Your data stays on this device") }
+                Text("History", style = MaterialTheme.typography.titleLarge)
+            }
+            item { ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
+                Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Settings", style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = { onSoundChange(!soundEnabled) }) { Text(if (soundEnabled) "Sound: on" else "Sound: off") }
+                }
+            } }
+            if (records.isEmpty()) item { EmptyProgressState(points / 100 + 1) }
             items(records, key = { it.id }) { record ->
                 ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) {
                     Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -286,6 +351,7 @@ fun ProgressScreen(dao: NudgeDao, onHome: () -> Unit) {
             }
         }
     }
+    if (showTrustDialog) AlertDialog(onDismissRequest = { showTrustDialog = false }, confirmButton = { TextButton(onClick = { showTrustDialog = false }) { Text("Got it") } }, title = { Text("Your privacy") }, text = { Text("Nothing here is ever sent to a server. All your history and progress stays only on your phone.") })
 }
 
 private fun actionLabel(action: ActionTaken): String = when (action) {
@@ -293,4 +359,49 @@ private fun actionLabel(action: ActionTaken): String = when (action) {
     ActionTaken.DISMISSED -> "Dismissed"
     ActionTaken.ALREADY_ALIGNED -> "Already aligned"
     ActionTaken.NONE -> "No response"
+}
+
+@Composable
+private fun GoalChip(goal: String) {
+    AssistChip(
+        onClick = {},
+        label = { Text(goal) },
+        leadingIcon = { Icon(goalIcon(goal), contentDescription = null, Modifier.size(18.dp)) },
+        colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    )
+}
+
+private fun goalIcon(goal: String) = when {
+    goal.contains("read", true) || goal.contains("book", true) -> Icons.Outlined.MenuBook
+    goal.contains("walk", true) || goal.contains("run", true) || goal.contains("exercise", true) -> Icons.Outlined.DirectionsRun
+    goal.contains("money", true) || goal.contains("save", true) -> Icons.Outlined.Savings
+    goal.contains("kid", true) || goal.contains("family", true) -> Icons.Outlined.Groups
+    else -> Icons.Outlined.Stars
+}
+
+@Composable
+private fun TrustBadge() {
+    ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Text("🔒 Your data stays on this device", Modifier.padding(screenPadding), color = MaterialTheme.colorScheme.primary)
+    }
+}
+
+@Composable
+private fun LoadingScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+            GrowthMark(1, Modifier.size(112.dp))
+            Text("Preparing your coach", style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+@Composable
+private fun EmptyProgressState(level: Int) {
+    ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+            GrowthMark(level, Modifier.size(108.dp))
+            Text("Your progress story starts with one kind choice.", style = MaterialTheme.typography.titleMedium)
+        }
+    }
 }
