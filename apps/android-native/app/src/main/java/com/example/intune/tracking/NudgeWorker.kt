@@ -38,6 +38,7 @@ import com.example.intune.data.RoutineContextPayload
 import com.example.intune.data.createNudgeApi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -76,7 +77,12 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             return Result.success()
         }
 
-        val routineContext = NudgeDatabase.get(applicationContext).routineDao().labeled().mapNotNull { profile ->
+        val nowCalendar = Calendar.getInstance()
+        val currentHour = nowCalendar.get(Calendar.HOUR_OF_DAY)
+        val isWeekday = nowCalendar.get(Calendar.DAY_OF_WEEK) in Calendar.MONDAY..Calendar.FRIDAY
+        val routineContext = NudgeDatabase.get(applicationContext).routineDao().labeled().filter { profile ->
+            isWeekday && currentHour >= profile.approxStartHour && currentHour < maxOf(profile.approxEndHour, profile.approxStartHour + 1)
+        }.mapNotNull { profile ->
             profile.label?.let { RoutineContextPayload(it, profile.dayPattern, profile.approxStartHour, profile.approxEndHour) }
         }.takeIf { it.isNotEmpty() }
         val request = NudgeRequest(
