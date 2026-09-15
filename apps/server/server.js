@@ -17,9 +17,21 @@ const parseJson = (value) => {
 };
 const activitySummary = (activity) => `${activity.app} for ${activity.durationMin ?? 'an unknown number of'} minutes at ${activity.timeOfDay ?? 'an unknown time'}`;
 const sessionSummary = (session) => `${session.apps.map(({ app, durationMin }) => `${app} for ${durationMin} minutes`).join(', ')} in the last ${session.windowMin ?? 30} minutes (total: ${session.totalDurationMin} minutes)`;
+const timeHour = (value) => {
+  const match = typeof value === 'string' && value.match(/^(\d{1,2}):\d{2}$/);
+  const hour = match && Number(match[1]);
+  return Number.isInteger(hour) && hour >= 0 && hour < 24 ? hour : null;
+};
+const activeRoutineContext = (activity, routineContext) => {
+  const routines = Array.isArray(routineContext) ? routineContext.filter((routine) => typeof routine?.label === 'string' && Number.isInteger(routine.approxStartHour) && Number.isInteger(routine.approxEndHour)) : [];
+  const hour = timeHour(activity?.timeOfDay);
+  return hour === null ? routines : routines.filter(({ approxStartHour, approxEndHour }) => hour >= approxStartHour && hour < Math.max(approxEndHour, approxStartHour + 1));
+};
+const routineSummary = (routines) => routines.length ? `Known routine context:\n${routines.map(({ label, dayPattern, approxStartHour, approxEndHour }) => `- ${dayPattern} ${String(approxStartHour).padStart(2, '0')}:00–${String(approxEndHour).padStart(2, '0')}:00 — ${label}`).join('\n')}` : '';
 
-async function classify(goals, activity, session, habits = '') {
+async function classify(goals, activity, session, habits = '', routineContext = []) {
   const fallback = { classification: 'ambiguous', reasoning: 'Classification was unavailable, so the activity needs cautious review.' };
+  const routineContextText = routineSummary(routineContext);
   const activityContext = activity ? [
     `App: ${activity.app}`,
     `Duration: ${activity.durationMin ?? 'unknown'} minutes`,
@@ -30,8 +42,8 @@ async function classify(goals, activity, session, habits = '') {
     const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
       model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
       messages: [
-        { role: 'system', content: 'Classify an activity against stated goals. Reply ONLY with valid JSON: {"classification":"aligned|misaligned|ambiguous","reasoning":"one sentence"}. Use ambiguous when its purpose could reasonably support a goal.' },
-        { role: 'user', content: `Goals: ${goals.join(', ')}\n${activityContext}${habits ? `\nHabits: ${habits}` : ''}` }
+        { role: 'system', content: 'Classify an activity against stated goals. Reply ONLY with valid JSON: {"classification":"aligned|misaligned|ambiguous","reasoning":"one sentence"}. Use ambiguous when its purpose could reasonably support a goal. Treat each supplied routine as optional context, only when the current activity time falls within its listed window; a known commute or drop-off can make an activity aligned or ambiguous.' },
+        { role: 'user', content: `Goals: ${goals.join(', ')}\n${activityContext}${routineContextText ? `\n${routineContextText}` : ''}${habits ? `\nHabits: ${habits}` : ''}` }
       ], temperature: 0
     }, { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json', 'HTTP-Referer': 'http://localhost:3000', 'X-Title': 'nudge-engine' }, timeout: 15000 });
     const parsed = parseJson(response.data.choices?.[0]?.message?.content);
@@ -78,13 +90,13 @@ async function ground(goals, activity, session) {
   }
 }
 
-async function decide(goals, activity, session, habits, classification, grounding) {
+async function decide(goals, activity, session, habits, classification, grounding, routineContext = []) {
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.6', reasoning: { effort: 'low' }, max_output_tokens: 300,
-      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. When a session is supplied, assess the combined app list and total duration rather than treating it as one app. Personalize recommendations using the supplied habits only when relevant; never invent habits. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
-      input: JSON.stringify({ goals, activity, session, habits, classification, grounding }),
+      instructions: 'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. When a session is supplied, assess the combined app list and total duration rather than treating it as one app. Personalize recommendations using the supplied habits only when relevant; never invent habits. When routineContext is supplied, use each listed routine only as optional context for the current time window; do not blanket-suppress nudges outside it. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
+      input: JSON.stringify({ goals, activity, session, habits, classification, grounding, routineContext }),
       text: { format: { type: 'json_schema', name: 'nudge_decision', strict: true, schema: { type: 'object', additionalProperties: false, properties: { shouldNotify: { type: 'boolean' }, message: { type: 'string' }, microAction: { type: 'string' } }, required: ['shouldNotify', 'message', 'microAction'] } } }
     });
     return { ...parseJson(response.output_text), error: false };
@@ -95,13 +107,15 @@ async function decide(goals, activity, session, habits, classification, groundin
 }
 
 app.post('/nudge', async (req, res) => {
-  const { goals, activity, session, habits = '' } = req.body || {};
+  const { goals, activity, session, habits = '', routineContext = [] } = req.body || {};
   const validActivity = activity && typeof activity.app === 'string';
   const validSession = session && Array.isArray(session.apps) && session.apps.length && typeof session.totalDurationMin === 'number';
   if (!Array.isArray(goals) || !goals.length || (!validActivity && !validSession)) return res.status(400).json({ error: 'Provide non-empty goals and either an activity with an app or a session with apps.' });
-  const stageOne = await classify(goals, activity, session, habits);
+  const activeRoutines = activeRoutineContext(activity, routineContext);
+  if (activeRoutines.length) console.log(`[nudge] ${routineSummary(activeRoutines)}`);
+  const stageOne = await classify(goals, activity, session, habits, activeRoutines);
   const grounding = stageOne.classification === 'ambiguous' ? await ground(goals, activity, session) : [];
-  const decision = await decide(goals, activity, session, habits, stageOne, grounding);
+  const decision = await decide(goals, activity, session, habits, stageOne, grounding, activeRoutines);
   res.json({ classification: stageOne.classification, shouldNotify: decision.shouldNotify, message: decision.message, microAction: decision.microAction, groundingUsed: grounding.length > 0, ...(decision.error ? { error: true } : {}) });
 });
 
