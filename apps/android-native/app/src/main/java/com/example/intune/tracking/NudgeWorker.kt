@@ -8,8 +8,10 @@ import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -57,8 +59,8 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             return Result.success()
         }
         // A 30-minute rolling window cannot contain more than 30 minutes of foreground use.
-        if (session.totalDurationMin < SESSION_THRESHOLD_MIN) {
-            Log.d(TAG, "Skipping /nudge: session total ${session.totalDurationMin}m is under ${SESSION_THRESHOLD_MIN}m")
+        if (session.totalDurationMin < TESTING_THRESHOLD_MIN) {
+            Log.d(TAG, "Skipping /nudge: session total ${session.totalDurationMin}m is under ${TESTING_THRESHOLD_MIN}m")
             return Result.success()
         }
         val now = System.currentTimeMillis()
@@ -105,12 +107,31 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     }
 
     private fun notify(nudge: NudgeResponse, recordId: Long) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
+        Log.d(TAG, "Preparing to build and show notification")
+        val notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        Log.d(TAG, "POST_NOTIFICATIONS granted: $notificationsGranted")
+        if (!notificationsGranted) {
+            Log.w(TAG, "Notification not shown: POST_NOTIFICATIONS is not granted")
+            return
+        }
+        val notificationManagerCompat = NotificationManagerCompat.from(applicationContext)
+        Log.d(TAG, "App notifications enabled: ${notificationManagerCompat.areNotificationsEnabled()}")
+        if (!notificationManagerCompat.areNotificationsEnabled()) {
+            Log.w(TAG, "Notification not shown: notifications are disabled for the app")
+            return
+        }
+        val powerManager = applicationContext.getSystemService(PowerManager::class.java)
+        Log.d(
+            TAG,
+            "Power state: deviceIdle=${powerManager.isDeviceIdleMode}, ignoringBatteryOptimizations=" +
+                powerManager.isIgnoringBatteryOptimizations(applicationContext.packageName),
+        )
         val manager = applicationContext.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Nudges", NotificationManager.IMPORTANCE_DEFAULT))
+            val channel = manager.getNotificationChannel(CHANNEL_ID)
+            Log.d(TAG, "Nudges channel: exists=${channel != null}, importance=${channelImportance(channel?.importance)}")
         }
         val intent = Intent(applicationContext, MainActivity::class.java)
             .putExtra(EXTRA_NUDGE_MESSAGE, nudge.message)
@@ -118,22 +139,38 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             .putExtra(EXTRA_NUDGE_RECORD_ID, recordId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val pendingIntent = PendingIntent.getActivity(applicationContext, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        manager.notify(NOTIFICATION_ID, NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("A quick nudge")
             .setContentText(nudge.message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(nudge.message))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .build())
+            .build()
+        try {
+            notificationManagerCompat.notify(NOTIFICATION_ID, notification)
+            Log.d(TAG, "NotificationManagerCompat.notify($NOTIFICATION_ID) completed")
+        } catch (error: Exception) {
+            Log.e(TAG, "NotificationManagerCompat.notify($NOTIFICATION_ID) failed", error)
+        }
     }
 
     private companion object {
         const val TAG = "NudgeWorker"
-        const val SESSION_THRESHOLD_MIN = 30
+        // TEMPORARY TESTING VALUE: revert to 30 before any release or real-world use.
+        const val TESTING_THRESHOLD_MIN = 5
         const val COOLDOWN_MS = 30 * 60_000L
         const val CHANNEL_ID = "nudges"
         const val NOTIFICATION_ID = 1
+    }
+
+    private fun channelImportance(importance: Int?): String = when (importance) {
+        NotificationManager.IMPORTANCE_NONE -> "NONE"
+        NotificationManager.IMPORTANCE_MIN -> "MIN"
+        NotificationManager.IMPORTANCE_LOW -> "LOW"
+        NotificationManager.IMPORTANCE_DEFAULT -> "DEFAULT"
+        NotificationManager.IMPORTANCE_HIGH -> "HIGH"
+        else -> importance?.toString() ?: "missing"
     }
 }
 
