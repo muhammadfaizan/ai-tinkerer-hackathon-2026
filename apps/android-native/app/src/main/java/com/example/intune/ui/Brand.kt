@@ -7,7 +7,6 @@ import android.media.ToneGenerator
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateColor
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -27,6 +26,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.MaterialTheme
@@ -36,8 +36,9 @@ import kotlin.math.sin
 @Composable
 fun CoachBackground(content: @Composable () -> Unit) {
     val transition = rememberInfiniteTransition(label = "coach-background")
-    val start by transition.animateColor(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.surfaceVariant, infiniteRepeatable(tween(12_000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "background-start")
-    val end by transition.animateColor(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.background, infiniteRepeatable(tween(15_000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "background-end")
+    val shift by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(12_000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "background-shift")
+    val start = lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.surfaceVariant, shift)
+    val end = lerp(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.background, shift)
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(start, end)))) {
         Canvas(Modifier.fillMaxSize().alpha(0.06f)) {
             for (x in 0..size.width.toInt() step 120) for (y in 0..size.height.toInt() step 150) {
@@ -51,16 +52,17 @@ fun CoachBackground(content: @Composable () -> Unit) {
 @Composable
 fun GrowthMark(level: Int, modifier: Modifier = Modifier) {
     Canvas(modifier) {
+        val center = Offset(size.width / 2, size.height / 2)
         val layers = (1 + level / 3).coerceAtMost(4)
         repeat(layers) { layer ->
             val count = 3 + layer * 2
             repeat(count) { index ->
-                rotate(index * 360f / count, size.center) {
-                    drawLeaf(size.center, size.minDimension * (0.16f + layer * 0.05f), Color(0xFF256B55).copy(alpha = 0.72f - layer * 0.1f), 0f)
+                rotate(index * 360f / count, center) {
+                    drawLeaf(center, size.minDimension * (0.16f + layer * 0.05f), Color(0xFF256B55).copy(alpha = 0.72f - layer * 0.1f), 0f)
                 }
             }
         }
-        drawCircle(Color(0xFF345B9B), size.minDimension * 0.08f, size.center)
+        drawCircle(Color(0xFF345B9B), size.minDimension * 0.08f, center)
     }
 }
 
@@ -112,7 +114,8 @@ class CoachSounds(context: Context) {
 
 @Composable
 fun rememberCoachSounds(): CoachSounds {
-    val sounds = remember { CoachSounds(LocalContext.current) }
+    val context = LocalContext.current
+    val sounds = remember(context) { CoachSounds(context) }
     DisposableEffect(sounds) { onDispose { sounds.release() } }
     return sounds
 }

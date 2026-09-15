@@ -29,10 +29,15 @@ data class NudgeResponse(
     val microAction: String,
     val groundingUsed: Boolean,
 )
+data class ParseGoalsRequest(val transcript: String, val existingGoals: List<String>)
+data class ParseGoalsResponse(val goals: List<String>)
 
 interface NudgeApi {
     @POST("nudge")
     suspend fun nudge(@Body request: NudgeRequest): NudgeResponse
+
+    @POST("parse-goals")
+    suspend fun parseGoals(@Body request: ParseGoalsRequest): ParseGoalsResponse
 }
 
 fun createNudgeApi(): NudgeApi = Retrofit.Builder()

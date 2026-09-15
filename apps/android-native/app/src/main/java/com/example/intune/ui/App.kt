@@ -1,6 +1,7 @@
 package com.example.intune.ui
 
 import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -8,11 +9,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -21,6 +24,9 @@ import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Savings
 import androidx.compose.material.icons.outlined.Stars
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
@@ -29,6 +35,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -75,6 +83,7 @@ import com.example.intune.data.NudgeResponse
 import com.example.intune.data.NudgeSource
 import com.example.intune.data.PendingNudge
 import com.example.intune.data.NudgeApi
+import com.example.intune.data.ParseGoalsRequest
 import com.example.intune.tracking.UsageAccess
 import com.example.intune.tracking.scheduleNudgeWork
 import com.example.intune.tracking.triggerNudgeCheckNow
@@ -88,6 +97,7 @@ private const val ONBOARDING = "onboarding"
 private const val PERMISSION = "permission"
 private const val HOME = "home"
 private const val PROGRESS = "progress"
+private const val EDIT_GOALS = "edit-goals"
 private val screenPadding = 16.dp
 
 @Composable
@@ -129,7 +139,7 @@ fun GoalAwareApp(
             else -> PERMISSION
         }) {
             composable(ONBOARDING) {
-                OnboardingScreen { enteredGoals ->
+                OnboardingScreen(api, scope) { enteredGoals ->
                     scope.launch {
                         repository.save(enteredGoals)
                         navController.navigate(PERMISSION) { popUpTo(ONBOARDING) { inclusive = true } }
@@ -138,8 +148,17 @@ fun GoalAwareApp(
             }
             composable(PERMISSION) { PermissionScreen { UsageAccess.openSettings(context) } }
             composable(HOME) {
-                HomeScreen(savedGoals, api, dao, scope, soundEnabled, notificationNudge, onNotificationNudgeShown) {
-                    navController.navigate(PROGRESS) { launchSingleTop = true }
+                HomeScreen(
+                    goals = savedGoals, api = api, dao = dao, scope = scope, soundEnabled = soundEnabled,
+                    notificationNudge = notificationNudge, onNotificationNudgeShown = onNotificationNudgeShown,
+                    onEdit = { navController.navigate(EDIT_GOALS) { launchSingleTop = true } },
+                    onProgress = { navController.navigate(PROGRESS) { launchSingleTop = true } },
+                )
+            }
+            composable(EDIT_GOALS) {
+                EditGoalsScreen(savedGoals, api, scope) { updatedGoals ->
+                    scope.launch { repository.save(updatedGoals) }
+                    navController.popBackStack()
                 }
             }
             composable(PROGRESS) {
@@ -189,19 +208,87 @@ fun PermissionScreen(onOpenSettings: () -> Unit) = CoachScaffold("Usage access")
 }
 
 @Composable
-fun OnboardingScreen(onSave: (List<String>) -> Unit) {
+fun OnboardingScreen(api: NudgeApi, scope: CoroutineScope, onSave: (List<String>) -> Unit) = GoalEditor("Welcome", emptyList(), api, scope, true, onSave)
+
+@Composable
+fun EditGoalsScreen(goals: List<String>, api: NudgeApi, scope: CoroutineScope, onSave: (List<String>) -> Unit) = GoalEditor("Edit goals", goals, api, scope, false, onSave)
+
+@Composable
+private fun GoalEditor(
+    title: String,
+    initialGoals: List<String>,
+    api: NudgeApi,
+    scope: CoroutineScope,
+    showTrust: Boolean,
+    onSave: (List<String>) -> Unit,
+) {
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     var text by remember { mutableStateOf("") }
-    val goals = remember { mutableStateListOf<String>() }
-    CoachScaffold("Welcome") { innerPadding ->
+    val goals = remember(initialGoals) { mutableStateListOf<String>().also { it.addAll(initialGoals) } }
+    var listening by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<List<String>?>(null) }
+    val voice = remember(context) {
+        GoalVoiceInput(context,
+            onTranscript = { transcript ->
+                listening = false
+                status = "Understanding what you said…"
+                scope.launch {
+                    runCatching { api.parseGoals(ParseGoalsRequest(transcript, goals.toList())) }
+                        .onSuccess { response ->
+                            preview = response.goals.map(String::trim).filter(String::isNotBlank).take(3)
+                            status = if (preview.isNullOrEmpty()) "I couldn't find clear goals. Try again or type them manually." else null
+                        }
+                        .onFailure { status = "Couldn't parse that right now. Please try again or type your goals manually." }
+                }
+            },
+            onError = { message -> status = message },
+            onListening = { listening = it },
+        )
+    }
+    DisposableEffect(voice) { onDispose { voice.destroy() } }
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) voice.start() else status = "Microphone permission was denied. You can always type your goals manually."
+    }
+    CoachScaffold(title) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-            Text("What would you like to improve?", style = MaterialTheme.typography.headlineSmall)
-            Text("Add up to three goals in plain language.")
-            OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("A goal") })
-            Button(onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); goals += text.trim(); text = "" }, enabled = text.isNotBlank() && goals.size < 3) { Text("Add goal") }
-            goals.forEach { GoalChip(it) }
-            TrustBadge()
-            Button(onClick = { onSave(goals) }, enabled = goals.isNotEmpty()) { Text("Save goals") }
+            Text(if (initialGoals.isEmpty()) "What would you like to improve?" else "Keep your goals current", style = MaterialTheme.typography.headlineSmall)
+            Text("Add up to three goals. Voice suggestions are always shown for confirmation first.")
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(text, { text = it }, Modifier.weight(1f), label = { Text("A goal") })
+                IconButton(onClick = {
+                    status = "Microphone access is used only to hear this goal."
+                    if (!android.speech.SpeechRecognizer.isRecognitionAvailable(context)) status = "Voice input isn't available on this device. Please type your goal."
+                    else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.start()
+                    else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                }) { Icon(Icons.Outlined.Mic, contentDescription = "Speak a goal") }
+            }
+            if (listening) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Listening…")
+            }
+            Button(onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                goals += text.trim(); text = ""
+            }, enabled = text.isNotBlank() && goals.size < 3) { Text("Add goal") }
+            goals.forEach { goal -> GoalChip(goal) { goals.remove(goal) } }
+            preview?.let { heardGoals ->
+                ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+                    Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Here's what I heard. Looks right?", style = MaterialTheme.typography.titleMedium)
+                        heardGoals.forEach { GoalChip(it) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onSave(heardGoals) }) { Text("Confirm") }
+                            TextButton(onClick = { preview = null; status = "Tap the microphone and try again." }) { Text("Try again") }
+                            TextButton(onClick = { goals.clear(); goals.addAll(heardGoals); preview = null }) { Text("Edit manually") }
+                        }
+                    }
+                }
+            }
+            status?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (showTrust) TrustBadge()
+            Button(onClick = { onSave(goals.toList()) }, enabled = goals.isNotEmpty()) { Text(if (initialGoals.isEmpty()) "Save goals" else "Save changes") }
         }
     }
 }
@@ -218,6 +305,7 @@ fun HomeScreen(
     soundEnabled: Boolean,
     notificationNudge: PendingNudge? = null,
     onNotificationNudgeShown: () -> Unit = {},
+    onEdit: () -> Unit,
     onProgress: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -240,7 +328,10 @@ fun HomeScreen(
     }
     CoachScaffold("Goal Coach", HOME, onHome = {}, onProgress = onProgress, soundEnabled = soundEnabled) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize().padding(innerPadding), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-            item { Text("Your goals", style = MaterialTheme.typography.titleLarge) }
+            item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("Your goals", style = MaterialTheme.typography.titleLarge)
+                IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, contentDescription = "Edit goals") }
+            } }
             items(goals) { GoalChip(it) }
             item { Text("Demo Mode", style = MaterialTheme.typography.titleLarge) }
             item { Text("Background checks run about every 15 minutes; Android does not guarantee an exact time.") }
@@ -345,6 +436,7 @@ fun ProgressScreen(dao: NudgeDao, soundEnabled: Boolean, onSoundChange: (Boolean
                         Text(formatter.format(Date(record.timestamp)), style = MaterialTheme.typography.labelMedium)
                         Text(record.appSummary, style = MaterialTheme.typography.titleMedium)
                         Text(record.message)
+                        Text("Goals then: ${record.goalsSnapshot}", style = MaterialTheme.typography.bodySmall)
                         Text(actionLabel(record.actionTaken), color = MaterialTheme.colorScheme.primary)
                     }
                 }
@@ -362,11 +454,12 @@ private fun actionLabel(action: ActionTaken): String = when (action) {
 }
 
 @Composable
-private fun GoalChip(goal: String) {
+private fun GoalChip(goal: String, onRemove: (() -> Unit)? = null) {
     AssistChip(
         onClick = {},
         label = { Text(goal) },
         leadingIcon = { Icon(goalIcon(goal), contentDescription = null, Modifier.size(18.dp)) },
+        trailingIcon = onRemove?.let { remove -> { IconButton(onClick = remove, Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, contentDescription = "Remove $goal", Modifier.size(16.dp)) } } },
         colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     )
 }

@@ -104,5 +104,24 @@ app.post('/nudge', async (req, res) => {
   const decision = await decide(goals, activity, session, habits, stageOne, grounding);
   res.json({ classification: stageOne.classification, shouldNotify: decision.shouldNotify, message: decision.message, microAction: decision.microAction, groundingUsed: grounding.length > 0, ...(decision.error ? { error: true } : {}) });
 });
+
+app.post('/parse-goals', async (req, res) => {
+  const { transcript, existingGoals = [] } = req.body || {};
+  if (typeof transcript !== 'string' || !transcript.trim() || !Array.isArray(existingGoals)) return res.status(400).json({ error: 'Provide a spoken transcript and existingGoals array.' });
+  try {
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const response = await openai.responses.create({
+      model: process.env.OPENAI_MODEL || 'gpt-5.6', reasoning: { effort: 'low' }, max_output_tokens: 200,
+      instructions: 'Extract up to three concise, plain-language self-improvement goals from the spoken transcript. If existing goals are supplied, use them only as context; do not silently retain them unless the transcript supports them. Return only the requested JSON.',
+      input: JSON.stringify({ transcript, existingGoals }),
+      text: { format: { type: 'json_schema', name: 'parsed_goals', strict: true, schema: { type: 'object', additionalProperties: false, properties: { goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3 } }, required: ['goals'] } } }
+    });
+    const goals = parseJson(response.output_text).goals.map(String).map((goal) => goal.trim()).filter(Boolean).slice(0, 3);
+    res.json({ goals });
+  } catch (error) {
+    console.error('[parse-goals] failed:', error.message);
+    res.status(502).json({ error: 'Could not parse spoken goals. Please try again or type them manually.' });
+  }
+});
 app.get('/health', (_req, res) => res.json({ ok: true }));
 app.listen(port, () => console.log(`nudge-engine listening on http://localhost:${port}`));
