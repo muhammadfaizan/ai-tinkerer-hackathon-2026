@@ -109,11 +109,13 @@ app.post('/parse-goals', async (req, res) => {
   const { transcript, existingGoals = [] } = req.body || {};
   if (typeof transcript !== 'string' || !transcript.trim() || !Array.isArray(existingGoals)) return res.status(400).json({ error: 'Provide a spoken transcript and existingGoals array.' });
   try {
+    const currentGoals = existingGoals.map(String).map((goal) => goal.trim()).filter(Boolean).slice(0, 3);
+    const currentGoalsText = currentGoals.length ? currentGoals.map((goal, index) => `${index + 1}. ${goal}`).join('\n') : 'none';
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL || 'gpt-5.6', reasoning: { effort: 'low' }, max_output_tokens: 200,
-      instructions: 'Extract up to three concise, plain-language self-improvement goals from the spoken transcript. If existing goals are supplied, use them only as context; do not silently retain them unless the transcript supports them. Return only the requested JSON.',
-      input: JSON.stringify({ transcript, existingGoals }),
+      instructions: 'Return the FULL updated goal list as concise, plain-language self-improvement goals. Start with the current goals exactly as given. Add the new goal from the user statement alongside them unless it clearly and explicitly replaces a specific existing goal. Never drop an existing goal unless the statement explicitly replaces it. Maximum three goals: if the list is already full and there is no explicit replacement, return the current goals unchanged. Return only the requested JSON.',
+      input: `Current goals:\n${currentGoalsText}\n\nNew statement from user: ${JSON.stringify(transcript.trim())}`,
       text: { format: { type: 'json_schema', name: 'parsed_goals', strict: true, schema: { type: 'object', additionalProperties: false, properties: { goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3 } }, required: ['goals'] } } }
     });
     const goals = parseJson(response.output_text).goals.map(String).map((goal) => goal.trim()).filter(Boolean).slice(0, 3);
