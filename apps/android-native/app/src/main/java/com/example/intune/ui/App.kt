@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -31,12 +30,15 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -61,6 +63,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -99,6 +102,7 @@ private const val HOME = "home"
 private const val PROGRESS = "progress"
 private const val EDIT_GOALS = "edit-goals"
 private val screenPadding = 16.dp
+private enum class VoiceState { LISTENING, PROCESSING }
 
 @Composable
 fun GoalAwareApp(
@@ -226,48 +230,63 @@ private fun GoalEditor(
     val haptic = LocalHapticFeedback.current
     var text by remember { mutableStateOf("") }
     val goals = remember(initialGoals) { mutableStateListOf<String>().also { it.addAll(initialGoals) } }
-    var listening by remember { mutableStateOf(false) }
+    var voiceState by remember { mutableStateOf<VoiceState?>(null) }
+    var voiceError by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<List<String>?>(null) }
+    val voicePulse by rememberInfiniteTransition(label = "voicePulse").animateFloat(
+        initialValue = 0.5f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(700), RepeatMode.Reverse),
+        label = "voicePulseAlpha",
+    )
     val voice = remember(context) {
         GoalVoiceInput(context,
             onTranscript = { transcript ->
-                listening = false
-                status = "Understanding what you said…"
+                voiceState = VoiceState.PROCESSING
+                status = null
                 scope.launch {
                     runCatching { api.parseGoals(ParseGoalsRequest(transcript, goals.toList())) }
                         .onSuccess { response ->
                             preview = response.goals.map(String::trim).filter(String::isNotBlank).take(3)
+                            voiceState = null
                             status = if (preview.isNullOrEmpty()) "I couldn't find clear goals. Try again or type them manually." else null
                         }
-                        .onFailure { status = "Couldn't parse that right now. Please try again or type your goals manually." }
+                        .onFailure {
+                            voiceState = null
+                            voiceError = "Couldn't process that — try again?"
+                        }
                 }
             },
-            onError = { message -> status = message },
-            onListening = { listening = it },
+            onError = { message -> voiceState = null; voiceError = message },
+            onListening = { voiceState = VoiceState.LISTENING },
+            onProcessing = { voiceState = VoiceState.PROCESSING },
         )
     }
     DisposableEffect(voice) { onDispose { voice.destroy() } }
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) voice.start() else status = "Microphone permission was denied. You can always type your goals manually."
+        if (granted) { voiceError = null; preview = null; voice.start() }
+        else status = "Microphone permission was denied. You can always type your goals manually."
     }
     CoachScaffold(title) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
             Text(if (initialGoals.isEmpty()) "What would you like to improve?" else "Keep your goals current", style = MaterialTheme.typography.headlineSmall)
             Text("Add up to three goals. Voice suggestions are always shown for confirmation first.")
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(text, { text = it }, Modifier.weight(1f), label = { Text("A goal") })
-                IconButton(onClick = {
-                    status = "Microphone access is used only to hear this goal."
-                    if (!android.speech.SpeechRecognizer.isRecognitionAvailable(context)) status = "Voice input isn't available on this device. Please type your goal."
-                    else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.start()
-                    else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                }) { Icon(Icons.Outlined.Mic, contentDescription = "Speak a goal") }
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), label = { Text("A goal") })
+                IconButton(modifier = Modifier.align(Alignment.CenterEnd), enabled = voiceState != VoiceState.PROCESSING, onClick = {
+                    if (voiceState == VoiceState.LISTENING) voice.stop()
+                    else if (!android.speech.SpeechRecognizer.isRecognitionAvailable(context)) status = "Voice input isn't available on this device. Please type your goal."
+                    else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        voiceError = null; preview = null; voice.start()
+                    } else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                }) { Icon(if (voiceState == VoiceState.LISTENING) Icons.Outlined.Close else Icons.Outlined.Mic, contentDescription = if (voiceState == VoiceState.LISTENING) "Stop recording" else "Speak a goal") }
             }
-            if (listening) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                Text("Listening…")
-            }
+            voiceState?.let { state -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(20.dp).alpha(if (state == VoiceState.LISTENING) voicePulse else 1f))
+                Text(if (state == VoiceState.LISTENING) "Listening..." else "Processing...")
+                if (state == VoiceState.LISTENING) TextButton(onClick = { voice.stop() }) { Text("Stop") }
+            } }
             Button(onClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 goals += text.trim(); text = ""
@@ -286,6 +305,14 @@ private fun GoalEditor(
                     }
                 }
             }
+            voiceError?.let { error -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                        voiceError = null; preview = null; voice.start()
+                    } else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                }) { Text("Retry") }
+            } }
             status?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             if (showTrust) TrustBadge()
             Button(onClick = { onSave(goals.toList()) }, enabled = goals.isNotEmpty()) { Text(if (initialGoals.isEmpty()) "Save goals" else "Save changes") }
@@ -335,7 +362,7 @@ fun HomeScreen(
             items(goals) { GoalChip(it) }
             item { Text("Demo Mode", style = MaterialTheme.typography.titleLarge) }
             item { Text("Background checks run about every 15 minutes; Android does not guarantee an exact time.") }
-            if (BuildConfig.DEBUG) item { Button(onClick = { triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
+            if (BuildConfig.DEBUG) item { Button(onClick = { Log.d("NudgeWorker", "Trigger check now button tapped"); triggerNudgeCheckNow(context) }, Modifier.fillMaxWidth()) { Text("Trigger check now") } }
             items(scenarios) { scenario ->
                 Button(onClick = {
                     status = "Checking…"

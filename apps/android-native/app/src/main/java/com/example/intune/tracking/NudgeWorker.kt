@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -146,9 +147,29 @@ fun scheduleNudgeWork(context: Context) {
 }
 
 fun triggerNudgeCheckNow(context: Context) {
-    WorkManager.getInstance(context).enqueueUniqueWork(
-        "nudge-check-debug",
-        ExistingWorkPolicy.KEEP,
+    val workManager = WorkManager.getInstance(context)
+    Log.d("NudgeWorker", "Debug check requested; replacing any previous debug request")
+    val operation = workManager.enqueueUniqueWork(
+        DEBUG_WORK_NAME,
+        ExistingWorkPolicy.REPLACE,
         OneTimeWorkRequestBuilder<NudgeWorker>().build(),
     )
+    operation.result.addListener({
+        try {
+            operation.result.get()
+            val workInfos = workManager.getWorkInfosForUniqueWork(DEBUG_WORK_NAME)
+            workInfos.addListener({
+                try {
+                    val states = workInfos.get().joinToString { it.state.name }
+                    Log.d("NudgeWorker", "Debug check enqueued; current state(s): $states")
+                } catch (error: Exception) {
+                    Log.e("NudgeWorker", "Could not read debug check state", error)
+                }
+            }, ContextCompat.getMainExecutor(context))
+        } catch (error: Exception) {
+            Log.e("NudgeWorker", "Debug check enqueue failed", error)
+        }
+    }, ContextCompat.getMainExecutor(context))
 }
+
+private const val DEBUG_WORK_NAME = "nudge-check-debug"
