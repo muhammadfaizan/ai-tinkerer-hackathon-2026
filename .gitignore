@@ -1,3 +1,4 @@
 node_modules/
 .env
 PROJECT_SPEC.md
+apps/android-native/build.gradle.kts

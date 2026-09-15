@@ -13,19 +13,24 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DirectionsRun
-import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Savings
-import androidx.compose.material.icons.outlined.Stars
+import androidx.compose.material.icons.filled.DirectionsRun
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Stars
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
@@ -47,6 +52,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -110,6 +116,7 @@ private const val PROGRESS = "progress"
 private const val EDIT_GOALS = "edit-goals"
 private const val ROUTINE_PERMISSION = "routine-permission"
 private val screenPadding = 16.dp
+private val largeSpacing = 24.dp
 private enum class VoiceState { LISTENING, PROCESSING }
 
 @Composable
@@ -227,8 +234,20 @@ private fun CoachScaffold(title: String, selectedRoute: String? = null, onHome: 
         topBar = { TopAppBar(title = { Text(title) }, colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = androidx.compose.ui.graphics.Color.Transparent)) },
         bottomBar = {
             if (selectedRoute != null) NavigationBar {
-                NavigationBarItem(selected = selectedRoute == HOME, onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onHome?.invoke() }, icon = { Text("⌂") }, label = { Text("Home") })
-                NavigationBarItem(selected = selectedRoute == PROGRESS, onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onProgress?.invoke() }, icon = { Text("★") }, label = { Text("Progress") })
+                val homeSelected = selectedRoute == HOME
+                NavigationBarItem(
+                    selected = homeSelected,
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onHome?.invoke() },
+                    icon = { Icon(if (homeSelected) Icons.Filled.Home else Icons.Outlined.Home, contentDescription = null) },
+                    label = { Text("Home") },
+                )
+                val progressSelected = selectedRoute == PROGRESS
+                NavigationBarItem(
+                    selected = progressSelected,
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.navigate(soundEnabled); onProgress?.invoke() },
+                    icon = { Icon(if (progressSelected) Icons.Filled.Star else Icons.Outlined.Star, contentDescription = null) },
+                    label = { Text("Progress") },
+                )
             }
         },
         content = content,
@@ -330,7 +349,7 @@ private fun GoalEditor(
                 }) { Icon(if (voiceState == VoiceState.LISTENING) Icons.Outlined.Close else Icons.Outlined.Mic, contentDescription = if (voiceState == VoiceState.LISTENING) "Stop recording" else "Speak a goal") }
             }
             voiceState?.let { state -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(20.dp).alpha(if (state == VoiceState.LISTENING) voicePulse else 1f))
+                Icon(Icons.Outlined.Mic, contentDescription = null, modifier = Modifier.size(24.dp).alpha(if (state == VoiceState.LISTENING) voicePulse else 1f))
                 Text(if (state == VoiceState.LISTENING) "Listening..." else "Processing...")
                 if (state == VoiceState.LISTENING) TextButton(onClick = { voice.stop() }) { Text("Stop") }
             } }
@@ -486,23 +505,23 @@ fun NudgeCard(nudge: NudgeResponse, soundEnabled: Boolean, onAction: (ActionTake
     var celebrating by remember { mutableStateOf(false) }
     val bonus by animateIntAsState(if (celebrating) 10 else 0, tween(550), label = "points")
     AnimatedVisibility(visible, exit = fadeOut(tween(220)) + scaleOut(targetScale = 0.92f, animationSpec = tween(220))) {
-        ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, elevation = CardDefaults.elevatedCardElevation()) {
-            Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-                Text(nudge.message, style = MaterialTheme.typography.titleMedium)
-                Text(nudge.microAction)
+        ElevatedCard(Modifier.fillMaxWidth(), elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)) {
+            Column(Modifier.padding(largeSpacing), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+                Text(nudge.message, style = MaterialTheme.typography.headlineMedium)
+                Text(nudge.microAction, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (celebrating) {
-                    CelebrationBurst(Modifier.fillMaxWidth().size(120.dp))
-                    Text("+$bonus points", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                    CelebrationBurst(Modifier.fillMaxWidth().size(128.dp))
+                    Text("+$bonus points", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.tertiary)
                 }
-                Button(onClick = {
+                Button(modifier = Modifier.fillMaxWidth().height(48.dp), onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress); sounds.accept(soundEnabled); celebrating = true
                     scope.launch { delay(700); visible = false; delay(220); onAction(ActionTaken.ACCEPTED) }
                 }) { Text("Accept") }
-                TextButton(onClick = {
+                TextButton(modifier = Modifier.fillMaxWidth().height(48.dp), onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.dismiss(soundEnabled); visible = false
                     scope.launch { delay(180); onAction(ActionTaken.DISMISSED) }
                 }) { Text("Dismiss") }
-                TextButton(onClick = {
+                OutlinedButton(modifier = Modifier.fillMaxWidth().height(48.dp), onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); sounds.dismiss(soundEnabled); visible = false
                     scope.launch { delay(180); onAction(ActionTaken.ALREADY_ALIGNED) }
                 }) { Text("Actually, I'm working") }
@@ -523,12 +542,17 @@ fun ProgressScreen(dao: NudgeDao, soundEnabled: Boolean, onSoundChange: (Boolean
     CoachScaffold("Progress", PROGRESS, onHome = onHome, onProgress = {}, soundEnabled = soundEnabled) { innerPadding ->
         LazyColumn(Modifier.fillMaxSize().padding(innerPadding), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
             item {
-                ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
-                    Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("🔥 $streak day streak", style = MaterialTheme.typography.headlineSmall)
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(largeSpacing),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("$streak", style = MaterialTheme.typography.displayLarge)
+                        Text("day streak", style = MaterialTheme.typography.titleMedium)
                         Text("$points points · Level ${points / 100 + 1}")
                         Text("$accepted accepted out of $total nudges")
-                        GrowthMark(points / 100 + 1, Modifier.size(84.dp))
+                        GrowthMark(points / 100 + 1, Modifier.size(80.dp))
                     }
                 }
             }
@@ -571,18 +595,18 @@ private fun GoalChip(goal: String, onRemove: (() -> Unit)? = null) {
     AssistChip(
         onClick = {},
         label = { Text(goal) },
-        leadingIcon = { Icon(goalIcon(goal), contentDescription = null, Modifier.size(18.dp)) },
-        trailingIcon = onRemove?.let { remove -> { IconButton(onClick = remove, Modifier.size(28.dp)) { Icon(Icons.Outlined.Close, contentDescription = "Remove $goal", Modifier.size(16.dp)) } } },
+        leadingIcon = { Icon(goalIcon(goal), contentDescription = null, Modifier.size(16.dp)) },
+        trailingIcon = onRemove?.let { remove -> { IconButton(onClick = remove) { Icon(Icons.Outlined.Close, contentDescription = "Remove $goal", Modifier.size(16.dp)) } } },
         colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     )
 }
 
 private fun goalIcon(goal: String) = when {
-    goal.contains("read", true) || goal.contains("book", true) -> Icons.Outlined.MenuBook
-    goal.contains("walk", true) || goal.contains("run", true) || goal.contains("exercise", true) -> Icons.Outlined.DirectionsRun
-    goal.contains("money", true) || goal.contains("save", true) -> Icons.Outlined.Savings
-    goal.contains("kid", true) || goal.contains("family", true) -> Icons.Outlined.Groups
-    else -> Icons.Outlined.Stars
+    goal.contains("read", true) || goal.contains("book", true) -> Icons.Filled.MenuBook
+    goal.contains("walk", true) || goal.contains("run", true) || goal.contains("exercise", true) -> Icons.Filled.DirectionsRun
+    goal.contains("money", true) || goal.contains("save", true) -> Icons.Filled.Savings
+    goal.contains("kid", true) || goal.contains("family", true) -> Icons.Filled.Groups
+    else -> Icons.Filled.Stars
 }
 
 @Composable
@@ -606,7 +630,7 @@ private fun LoadingScreen() {
 private fun EmptyProgressState(level: Int) {
     ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
         Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-            GrowthMark(level, Modifier.size(108.dp))
+            GrowthMark(level, Modifier.size(112.dp))
             Text("Your progress story starts with one kind choice.", style = MaterialTheme.typography.titleMedium)
         }
     }

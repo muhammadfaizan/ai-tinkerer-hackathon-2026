@@ -39,10 +39,11 @@ fun CoachBackground(content: @Composable () -> Unit) {
     val shift by transition.animateFloat(0f, 1f, infiniteRepeatable(tween(12_000, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "background-shift")
     val start = lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.surfaceVariant, shift)
     val end = lerp(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.background, shift)
+    val leafColor = MaterialTheme.colorScheme.primary
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(start, end)))) {
         Canvas(Modifier.fillMaxSize().alpha(0.06f)) {
             for (x in 0..size.width.toInt() step 120) for (y in 0..size.height.toInt() step 150) {
-                drawLeaf(Offset(x.toFloat(), y.toFloat()), 28f, Color(0xFF256B55), (x + y) % 45f)
+                drawLeaf(Offset(x.toFloat(), y.toFloat()), 28f, leafColor, (x + y) % 45f)
             }
         }
         content()
@@ -51,6 +52,8 @@ fun CoachBackground(content: @Composable () -> Unit) {
 
 @Composable
 fun GrowthMark(level: Int, modifier: Modifier = Modifier) {
+    val primary = MaterialTheme.colorScheme.primary
+    val accent = MaterialTheme.colorScheme.tertiary
     Canvas(modifier) {
         val center = Offset(size.width / 2, size.height / 2)
         val layers = (1 + level / 3).coerceAtMost(4)
@@ -58,20 +61,24 @@ fun GrowthMark(level: Int, modifier: Modifier = Modifier) {
             val count = 3 + layer * 2
             repeat(count) { index ->
                 rotate(index * 360f / count, center) {
-                    drawLeaf(center, size.minDimension * (0.16f + layer * 0.05f), Color(0xFF256B55).copy(alpha = 0.72f - layer * 0.1f), 0f)
+                    drawLeaf(center, size.minDimension * (0.16f + layer * 0.05f), primary.copy(alpha = 0.72f - layer * 0.1f), 0f)
                 }
             }
         }
-        drawCircle(Color(0xFF345B9B), size.minDimension * 0.08f, center)
+        drawCircle(accent, size.minDimension * 0.08f, center)
     }
 }
 
 @Composable
 fun CelebrationBurst(modifier: Modifier = Modifier) {
     val progress = remember { Animatable(0f) }
+    val colors = listOf(
+        MaterialTheme.colorScheme.secondary,
+        MaterialTheme.colorScheme.tertiary,
+        MaterialTheme.colorScheme.primary,
+    )
     LaunchedEffect(Unit) { progress.animateTo(1f, tween(650)) }
     Canvas(modifier) {
-        val colors = listOf(Color(0xFF345B9B), Color(0xFF256B55), Color(0xFF236A78))
         repeat(14) { index ->
             val angle = index * 2 * Math.PI / 14
             val distance = size.minDimension * 0.42f * progress.value
