@@ -63,8 +63,11 @@ interface NudgeDao {
     """)
     fun getCurrentStreak(): Flow<Int>
 
-    @Query("UPDATE nudge_records SET actionTaken = :actionTaken WHERE id = :id")
-    suspend fun updateActionTaken(id: Long, actionTaken: ActionTaken)
+    @Query("UPDATE nudge_records SET actionTaken = :actionTaken WHERE id = :id AND actionTaken = 'NONE'")
+    suspend fun updateActionTaken(id: Long, actionTaken: ActionTaken): Int
+
+    @Query("SELECT actionTaken FROM nudge_records WHERE id = :id LIMIT 1")
+    suspend fun getActionTaken(id: Long): ActionTaken?
 
     @androidx.room.Insert
     suspend fun insert(record: NudgeRecord): Long

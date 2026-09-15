@@ -345,11 +345,14 @@ fun HomeScreen(
     var status by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(notificationNudge) {
         notificationNudge?.let { pending ->
-            val recordId = pending.recordId.takeIf { it > 0 } ?: dao.insert(NudgeRecord(
-                timestamp = System.currentTimeMillis(), source = NudgeSource.SESSION, appSummary = "Background session",
-                message = pending.nudge.message, microAction = pending.nudge.microAction, goalsSnapshot = goals.joinToString(),
-            ))
-            shownNudge = ShownNudge(pending.nudge, recordId)
+            val alreadyActioned = pending.recordId > 0 && dao.getActionTaken(pending.recordId)?.let { it != ActionTaken.NONE } == true
+            if (!alreadyActioned) {
+                val recordId = pending.recordId.takeIf { it > 0 } ?: dao.insert(NudgeRecord(
+                    timestamp = System.currentTimeMillis(), source = NudgeSource.SESSION, appSummary = "Background session",
+                    message = pending.nudge.message, microAction = pending.nudge.microAction, goalsSnapshot = goals.joinToString(),
+                ))
+                shownNudge = ShownNudge(pending.nudge, recordId)
+            }
             onNotificationNudgeShown()
         }
     }

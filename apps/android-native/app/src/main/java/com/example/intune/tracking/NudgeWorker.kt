@@ -9,6 +9,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.util.Log
@@ -160,14 +161,28 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             .setStyle(NotificationCompat.BigTextStyle().bigText(nudge.message))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+            .addAction(0, "Accept", actionPendingIntent(ACTION_ACCEPT, recordId, 1))
+            .addAction(0, "Dismiss", actionPendingIntent(ACTION_DISMISS, recordId, 2))
+            .addAction(0, "Actually, I'm working", actionPendingIntent(ACTION_ALREADY_ALIGNED, recordId, 3))
             .build()
         try {
-            notificationManagerCompat.notify(NOTIFICATION_ID, notification)
-            Log.d(TAG, "NotificationManagerCompat.notify($NOTIFICATION_ID) completed")
+            notificationManagerCompat.notify(NUDGE_NOTIFICATION_ID, notification)
+            Log.d(TAG, "NotificationManagerCompat.notify($NUDGE_NOTIFICATION_ID) completed")
         } catch (error: Exception) {
-            Log.e(TAG, "NotificationManagerCompat.notify($NOTIFICATION_ID) failed", error)
+            Log.e(TAG, "NotificationManagerCompat.notify($NUDGE_NOTIFICATION_ID) failed", error)
         }
     }
+
+    private fun actionPendingIntent(action: String, recordId: Long, actionIndex: Int): PendingIntent =
+        PendingIntent.getBroadcast(
+            applicationContext,
+            recordId.hashCode() * 10 + actionIndex,
+            Intent(applicationContext, NudgeActionReceiver::class.java)
+                .setAction(action)
+                .setData(Uri.parse("intune://nudge/$recordId/$action"))
+                .putExtra(EXTRA_NUDGE_RECORD_ID, recordId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
     private companion object {
         const val TAG = "NudgeWorker"
@@ -177,7 +192,6 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         const val TESTING_THRESHOLD_MIN = 5
         const val COOLDOWN_MS = PRODUCTION_COOLDOWN_MIN * 60_000L
         const val CHANNEL_ID = "nudges_v2"
-        const val NOTIFICATION_ID = 1
     }
 
     private fun channelImportance(importance: Int?): String = when (importance) {
@@ -193,6 +207,10 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
 const val EXTRA_NUDGE_MESSAGE = "nudge_message"
 const val EXTRA_MICRO_ACTION = "micro_action"
 const val EXTRA_NUDGE_RECORD_ID = "nudge_record_id"
+const val ACTION_ACCEPT = "com.example.intune.action.ACCEPT"
+const val ACTION_DISMISS = "com.example.intune.action.DISMISS"
+const val ACTION_ALREADY_ALIGNED = "com.example.intune.action.ALREADY_ALIGNED"
+const val NUDGE_NOTIFICATION_ID = 1
 
 fun scheduleNudgeWork(context: Context) {
     val request = PeriodicWorkRequestBuilder<NudgeWorker>(15, TimeUnit.MINUTES).build()
