@@ -2,15 +2,11 @@ package com.example.intune.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Sage = Color(0xFF4A7C6E)
-val SageLight = Color(0xFFBFD8CE)
-val Coral = Color(0xFFE8927C)
-val CoralLight = Color(0xFFF6D6CE)
-val Amber = Color(0xFFC98A24)
-val AmberLight = Color(0xFFF4DEB7)
-val WarmOffWhite = Color(0xFFFAF9F6)
+val Violet = Color(0xFF7C3AED)
+val Orange = Color(0xFFFF7A45)
+val Pink = Color(0xFFF472B6)
+val Gold = Color(0xFFFBBF24)
 val WhiteSurface = Color(0xFFFFFFFF)
-val Ink = Color(0xFF24312D)
-val MutedInk = Color(0xFF5E6F68)
-val Night = Color(0xFF17221E)
-val NightSurface = Color(0xFF20312B)
+val NearWhiteSurface = Color(0xFFFDFBFF)
+val Charcoal = Color(0xFF1F1A2E)
+val MutedCharcoal = Color(0xFF625C70)

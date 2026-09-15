@@ -1,56 +1,61 @@
 package com.example.intune.ui.theme
 
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-private val DarkColorScheme = darkColorScheme(
-    primary = SageLight,
-    secondary = Coral,
-    tertiary = Amber,
-    background = Night,
-    surface = NightSurface,
-    surfaceVariant = Sage,
-    primaryContainer = Sage,
-    secondaryContainer = CoralLight,
-    tertiaryContainer = AmberLight,
-    onPrimary = Night,
-    onSecondary = Ink,
-    onTertiary = Ink,
-    onBackground = SageLight,
-    onSurface = SageLight,
-    onSurfaceVariant = SageLight,
-    onPrimaryContainer = Night,
-    onSecondaryContainer = Ink,
-    onTertiaryContainer = Ink,
-    outline = SageLight,
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Sage,
-    secondary = Coral,
-    tertiary = Amber,
-    background = WarmOffWhite,
+private val IntuneColorScheme = lightColorScheme(
+    primary = Pink,
+    onPrimary = Charcoal,
+    primaryContainer = Pink,
+    onPrimaryContainer = Charcoal,
+    secondary = Violet,
+    onSecondary = WhiteSurface,
+    secondaryContainer = Violet,
+    onSecondaryContainer = WhiteSurface,
+    tertiary = Gold,
+    onTertiary = Charcoal,
+    tertiaryContainer = Gold,
+    onTertiaryContainer = Charcoal,
+    background = Violet,
+    onBackground = WhiteSurface,
     surface = WhiteSurface,
-    surfaceVariant = SageLight,
-    primaryContainer = SageLight,
-    secondaryContainer = CoralLight,
-    tertiaryContainer = AmberLight,
-    onPrimary = WhiteSurface,
-    onSecondary = Ink,
-    onTertiary = Ink,
-    onBackground = Ink,
-    onSurface = Ink,
-    onSurfaceVariant = MutedInk,
-    onPrimaryContainer = Ink,
-    onSecondaryContainer = Ink,
-    onTertiaryContainer = Ink,
-    outline = MutedInk,
+    onSurface = Charcoal,
+    surfaceVariant = NearWhiteSurface,
+    onSurfaceVariant = MutedCharcoal,
+    surfaceTint = WhiteSurface,
+    inverseSurface = Charcoal,
+    inverseOnSurface = WhiteSurface,
+    inversePrimary = Pink,
+    outline = Violet,
+    outlineVariant = Pink,
+    scrim = Charcoal,
+    error = Pink,
+    onError = Charcoal,
+    errorContainer = NearWhiteSurface,
+    onErrorContainer = Charcoal,
+    surfaceDim = NearWhiteSurface,
+    surfaceBright = WhiteSurface,
+    surfaceContainerLowest = WhiteSurface,
+    surfaceContainerLow = WhiteSurface,
+    surfaceContainer = WhiteSurface,
+    surfaceContainerHigh = NearWhiteSurface,
+    surfaceContainerHighest = NearWhiteSurface,
+    primaryFixed = Pink,
+    primaryFixedDim = Pink,
+    onPrimaryFixed = Charcoal,
+    onPrimaryFixedVariant = Charcoal,
+    secondaryFixed = Violet,
+    secondaryFixedDim = Violet,
+    onSecondaryFixed = WhiteSurface,
+    onSecondaryFixedVariant = WhiteSurface,
+    tertiaryFixed = Gold,
+    tertiaryFixedDim = Gold,
+    onTertiaryFixed = Charcoal,
+    onTertiaryFixedVariant = Charcoal,
 )
 
 private val IntuneShapes = Shapes(
@@ -62,16 +67,11 @@ private val IntuneShapes = Shapes(
 )
 
 @Composable
-fun IntuneTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit
-) {
-    val colorScheme = if (darkTheme) DarkColorScheme else LightColorScheme
-
+fun IntuneTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = IntuneColorScheme,
         typography = Typography,
         shapes = IntuneShapes,
-        content = content
+        content = content,
     )
 }
