@@ -4,12 +4,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -18,41 +13,20 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.MaterialTheme
-import com.example.intune.ui.theme.Orange
-import com.example.intune.ui.theme.Violet
 import kotlin.math.cos
 import kotlin.math.sin
 
 @Composable
 fun CoachBackground(content: @Composable () -> Unit) {
-    val transition = rememberInfiniteTransition(label = "coach-background")
-    val shift by transition.animateFloat(
-        0f,
-        1f,
-        infiniteRepeatable(tween(14_000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "background-shift",
-    )
-    val start = lerp(Violet, Orange, shift * 0.18f)
-    val end = lerp(Orange, Violet, shift * 0.18f)
-    val leafColor = MaterialTheme.colorScheme.onBackground
-    Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(start, end)))) {
-        Canvas(Modifier.fillMaxSize().alpha(0.06f)) {
-            for (x in 0..size.width.toInt() step 120) for (y in 0..size.height.toInt() step 150) {
-                drawLeaf(Offset(x.toFloat(), y.toFloat()), 28f, leafColor, (x + y) % 45f)
-            }
-        }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         content()
     }
 }

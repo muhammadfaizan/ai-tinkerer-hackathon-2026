@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="violet">#FF7C3AED</color>
-    <color name="orange">#FFFF7A45</color>
-    <color name="pink">#FFF472B6</color>
-    <color name="gold">#FFFBBF24</color>
-    <color name="charcoal">#FF1F1A2E</color>
-    <color name="surface">#FFFFFFFF</color>
+    <color name="cream">#FFF5F1E8</color>
+    <color name="sage">#FF5B7A6B</color>
+    <color name="terracotta">#FFC17A54</color>
+    <color name="surface">#FFFCFAF5</color>
+    <color name="gold">#FFC9A227</color>
+    <color name="text">#FF2E2A24</color>
 </resources>

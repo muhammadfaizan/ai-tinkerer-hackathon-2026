@@ -69,6 +69,9 @@ interface NudgeDao {
     @Query("SELECT * FROM nudge_records ORDER BY timestamp DESC")
     fun getAllRecords(): Flow<List<NudgeRecord>>
 
+    @Query("SELECT * FROM nudge_records WHERE timestamp >= :startOfDay ORDER BY timestamp DESC LIMIT 1")
+    fun latestRecordSince(startOfDay: Long): Flow<NudgeRecord?>
+
     @Query("SELECT COALESCE(SUM(CASE WHEN actionTaken = 'ACCEPTED' THEN 10 ELSE 0 END), 0) FROM nudge_records")
     fun getTotalPoints(): Flow<Int>
 
@@ -117,6 +120,9 @@ interface RoutineDao {
     @Query("SELECT * FROM routine_profiles WHERE status = 'LABELED' ORDER BY id ASC")
     suspend fun labeled(): List<RoutineProfile>
 
+    @Query("SELECT * FROM routine_profiles WHERE status = 'LABELED' ORDER BY id ASC")
+    fun labeledProfiles(): Flow<List<RoutineProfile>>
+
     @Query("SELECT COUNT(*) FROM routine_profiles WHERE activityType = :activityType AND dayPattern = :dayPattern AND approxStartHour = :hour")
     suspend fun matchingCount(activityType: RoutineActivityType, dayPattern: String, hour: Int): Int
 
@@ -125,6 +131,9 @@ interface RoutineDao {
 
     @Query("UPDATE routine_profiles SET status = :status, label = :label WHERE id = :id")
     suspend fun updateProfile(id: Long, status: RoutineStatus, label: String?)
+
+    @Query("DELETE FROM routine_profiles WHERE id = :id")
+    suspend fun deleteProfile(id: Long)
 }
 
 @Database(entities = [NudgeRecord::class, ActivityTransitionRecord::class, RoutineProfile::class], version = 2, exportSchema = false)
