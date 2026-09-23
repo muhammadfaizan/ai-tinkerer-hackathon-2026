@@ -3,3 +3,6 @@ node_modules/
 PROJECT_SPEC.md
 apps/android-native/build.gradle.kts
 DESIGN_SYSTEM.md
+output/imagegen/*
+
+generate-ui-references.js

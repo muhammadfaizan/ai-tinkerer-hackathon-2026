@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="cream">#FFF5F1E8</color>
-    <color name="sage">#FF5B7A6B</color>
-    <color name="terracotta">#FFC17A54</color>
-    <color name="surface">#FFFCFAF5</color>
-    <color name="gold">#FFC9A227</color>
-    <color name="text">#FF2E2A24</color>
+    <color name="cream">#FFFDFAF7</color>
+    <color name="indigo">#FF453F63</color>
+    <color name="lavender_tint">#FFE3DCF0</color>
+    <color name="coral">#FFE8916B</color>
+    <color name="surface">#FFFEFCFA</color>
+    <color name="text">#FF3A3352</color>
 </resources>
