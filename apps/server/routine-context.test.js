@@ -8,6 +8,7 @@ const routines = [
 
 assert.deepEqual(activeRoutineContext({ timeOfDay: '07:30' }, routines), [routines[0]]);
 assert.deepEqual(activeRoutineContext({ timeOfDay: '21:30' }, routines), []);
+assert.deepEqual(activeRoutineContext(null, routines), []);
 assert.match(
   routineSummary(routines),
   /- weekday 07:00–08:00 — School drop-off\n- weekday 17:00–18:00 — Commute home/,

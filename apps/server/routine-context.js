@@ -14,12 +14,11 @@ const activeRoutineContext = (activity, routineContext) => {
       )
     : [];
   const hour = timeHour(activity?.timeOfDay);
-  return hour === null
-    ? routines
-    : routines.filter(
-        ({ approxStartHour, approxEndHour }) =>
-          hour >= approxStartHour && hour < Math.max(approxEndHour, approxStartHour + 1),
-      );
+  if (hour === null) return [];
+  return routines.filter(
+    ({ approxStartHour, approxEndHour }) =>
+      hour >= approxStartHour && hour < Math.max(approxEndHour, approxStartHour + 1),
+  );
 };
 
 const routineSummary = (routines) =>

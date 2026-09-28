@@ -26,5 +26,18 @@ module.exports = [
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     },
   },
+  {
+    files: ['test/**/*.test.js'],
+    languageOptions: {
+      globals: {
+        after: 'readonly',
+        afterEach: 'readonly',
+        before: 'readonly',
+        beforeEach: 'readonly',
+        describe: 'readonly',
+        it: 'readonly',
+      },
+    },
+  },
   prettier,
 ];

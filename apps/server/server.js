@@ -1,13 +1,19 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const OpenAI = require('openai');
 const ExaModule = require('exa-js');
 const Exa = ExaModule.default || ExaModule;
 const { activeRoutineContext, routineSummary } = require('./routine-context');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_DECISIONS_URL = 'https://openrouter.ai/api/alpha/decisions';
+const JEV_MODEL = 'typesafe/jev-1.13';
+const CHAT_MODEL = process.env.OPENROUTER_CLASSIFIER_MODEL || 'google/gemini-2.5-flash-lite';
+const WRITER_MODEL = process.env.OPENROUTER_WRITER_MODEL || 'google/gemini-2.5-flash-lite';
+const PARSER_MODEL = process.env.OPENROUTER_PARSER_MODEL || 'google/gemini-2.5-flash-lite';
+const GROUNDING_CONFIDENCE_MIN = Number(process.env.GROUNDING_CONFIDENCE_MIN || 0.6);
 app.use(express.json());
 
 const fallbackDecision = { shouldNotify: false, message: '', microAction: '', error: true };
@@ -20,61 +26,195 @@ const activitySummary = (activity) =>
   `${activity.app} for ${activity.durationMin ?? 'an unknown number of'} minutes at ${activity.timeOfDay ?? 'an unknown time'}`;
 const sessionSummary = (session) =>
   `${session.apps.map(({ app, durationMin }) => `${app} for ${durationMin} minutes`).join(', ')} in the last ${session.windowMin ?? 30} minutes (total: ${session.totalDurationMin} minutes)`;
+const openRouterHeaders = {
+  Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+  'Content-Type': 'application/json',
+  'HTTP-Referer': 'http://localhost:3000',
+  'X-Title': 'nudge-engine',
+};
 
-async function classify(goals, activity, session, habits = '', routineContext = []) {
-  const fallback = {
-    classification: 'ambiguous',
-    reasoning: 'Classification was unavailable, so the activity needs cautious review.',
+async function chatJson({ model, messages, schema, name, maxTokens }) {
+  const request = {
+    model,
+    messages,
+    temperature: 0,
+    max_tokens: maxTokens,
+    response_format: { type: 'json_schema', json_schema: { name, strict: true, schema } },
   };
+  try {
+    const response = await axios.post(OPENROUTER_CHAT_URL, request, {
+      headers: openRouterHeaders,
+      timeout: 15000,
+    });
+    return parseJson(response.data.choices?.[0]?.message?.content);
+  } catch (firstError) {
+    const retry = {
+      ...request,
+      response_format: undefined,
+      messages: [
+        ...messages,
+        {
+          role: 'user',
+          content: 'Reply with only one valid JSON object matching the requested schema.',
+        },
+      ],
+    };
+    try {
+      const response = await axios.post(OPENROUTER_CHAT_URL, retry, {
+        headers: openRouterHeaders,
+        timeout: 15000,
+      });
+      return parseJson(response.data.choices?.[0]?.message?.content);
+    } catch (retryError) {
+      retryError.message = `${retryError.message} (structured-output attempt: ${firstError.message})`;
+      throw retryError;
+    }
+  }
+}
+
+const classificationSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { classification: { type: 'string', enum: ['aligned', 'misaligned', 'ambiguous'] } },
+  required: ['classification'],
+};
+const decisionSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    shouldNotify: { type: 'boolean' },
+    message: { type: 'string' },
+    microAction: { type: 'string' },
+  },
+  required: ['shouldNotify', 'message', 'microAction'],
+};
+const goalsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3 } },
+  required: ['goals'],
+};
+
+function classificationState(goals, activity, session, habits, routineContext) {
+  return {
+    goals,
+    activity: activity
+      ? {
+          app: activity.app,
+          durationMin: activity.durationMin ?? null,
+          timeOfDay: activity.timeOfDay ?? null,
+          category: activity.category?.trim?.() || null,
+        }
+      : null,
+    session: session
+      ? {
+          apps: session.apps.map(({ app, durationMin }) => ({ app, durationMin })),
+          totalDurationMin: session.totalDurationMin,
+          windowMin: session.windowMin ?? 30,
+        }
+      : null,
+    timeOfDay: activity?.timeOfDay ?? null,
+    category: activity?.category?.trim?.() || null,
+    routineContext,
+    habits: habits || null,
+  };
+}
+
+async function classifyWithJev(goals, activity, session, habits, routineContext) {
+  const response = await axios.post(
+    OPENROUTER_DECISIONS_URL,
+    {
+      model: JEV_MODEL,
+      state: classificationState(goals, activity, session, habits, routineContext),
+      questions: {
+        alignment: {
+          type: 'choice',
+          instructions:
+            'Choose the best label for whether this observed app activity or combined session aligns with the stated goals. Use routine context only when it applies to the current time. Choose ambiguous when the available information cannot reliably establish alignment.',
+          criteria: {
+            aligned:
+              'The activity or session clearly advances, or reasonably supports, at least one stated goal.',
+            misaligned:
+              'The activity or session likely detracts from the stated goals without a reasonable goal-supporting purpose.',
+            ambiguous:
+              'The purpose is uncertain, a plausible goal-supporting purpose exists, or the evidence is insufficient.',
+          },
+        },
+      },
+    },
+    { headers: openRouterHeaders, timeout: 15000 },
+  );
+  const answer = response.data?.answers?.alignment;
+  if (!answer || !['aligned', 'misaligned', 'ambiguous'].includes(answer.choice))
+    throw new Error('Jev returned no valid alignment choice');
+  return {
+    classification: answer.choice,
+    confidence: Number(answer.confidence),
+    probabilities: answer.probabilities || {},
+    path: 'jev',
+  };
+}
+
+async function classifyWithChatFallback(goals, activity, session, habits, routineContext) {
   const routineContextText = routineSummary(routineContext);
   const activityContext = activity
     ? [
         `App: ${activity.app}`,
         `Duration: ${activity.durationMin ?? 'unknown'} minutes`,
         `Time of day: ${activity.timeOfDay ?? 'unknown'}`,
-        typeof activity.category === 'string' && activity.category.trim()
-          ? `Category: ${activity.category.trim()}`
-          : null,
+        activity.category?.trim?.() ? `Category: ${activity.category.trim()}` : null,
       ]
         .filter(Boolean)
         .join('\n')
     : `Session: ${sessionSummary(session)}`;
-  try {
-    const response = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
+  const parsed = await chatJson({
+    model: CHAT_MODEL,
+    name: 'activity_classification',
+    schema: classificationSchema,
+    maxTokens: 80,
+    messages: [
       {
-        model: process.env.OPENROUTER_MODEL || 'google/gemini-2.5-flash',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Classify an activity against stated goals. Reply ONLY with valid JSON: {"classification":"aligned|misaligned|ambiguous","reasoning":"one sentence"}. Use ambiguous when its purpose could reasonably support a goal. Treat each supplied routine as optional context, only when the current activity time falls within its listed window; a known commute or drop-off can make an activity aligned or ambiguous.',
-          },
-          {
-            role: 'user',
-            content: `Goals: ${goals.join(', ')}\n${activityContext}${routineContextText ? `\n${routineContextText}` : ''}${habits ? `\nHabits: ${habits}` : ''}`,
-          },
-        ],
-        temperature: 0,
+        role: 'system',
+        content:
+          'Classify an activity against stated goals. Use ambiguous when its purpose could reasonably support a goal. Treat supplied routines as optional context only when their current window applies.',
       },
       {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'http://localhost:3000',
-          'X-Title': 'nudge-engine',
-        },
-        timeout: 15000,
+        role: 'user',
+        content: `Goals: ${goals.join(', ')}\n${activityContext}${routineContextText ? `\n${routineContextText}` : ''}${habits ? `\nHabits: ${habits}` : ''}`,
       },
-    );
-    const parsed = parseJson(response.data.choices?.[0]?.message?.content);
-    const classification = ['aligned', 'misaligned', 'ambiguous'].includes(parsed.classification)
+    ],
+  });
+  return {
+    classification: ['aligned', 'misaligned', 'ambiguous'].includes(parsed.classification)
       ? parsed.classification
-      : 'ambiguous';
-    return { classification, reasoning: String(parsed.reasoning || fallback.reasoning) };
+      : 'ambiguous',
+    path: 'chat-fallback',
+  };
+}
+
+async function classify(goals, activity, session, habits = '', routineContext = []) {
+  try {
+    const result = await classifyWithJev(goals, activity, session, habits, routineContext);
+    console.log(
+      `[classify] path=jev classification=${result.classification} confidence=${result.confidence}`,
+    );
+    return result;
   } catch (error) {
-    console.error('[classify] OpenRouter failed:', error.message);
-    return fallback;
+    console.error('[classify] Jev failed; using chat fallback:', error.message);
+    try {
+      const result = await classifyWithChatFallback(
+        goals,
+        activity,
+        session,
+        habits,
+        routineContext,
+      );
+      console.log(`[classify] path=chat-fallback classification=${result.classification}`);
+      return result;
+    } catch (fallbackError) {
+      console.error('[classify] chat fallback failed:', fallbackError.message);
+      return { classification: 'ambiguous', path: 'fallback-unavailable' };
+    }
   }
 }
 
@@ -84,17 +224,12 @@ async function ground(goals, activity, session) {
       console.warn('[ground] Exa skipped: EXA_API_KEY is not configured.');
       return [];
     }
-
     const exa = new Exa(process.env.EXA_API_KEY);
     const query = `Is ${activity ? activitySummary(activity) : sessionSummary(session)} plausibly useful toward these goals: ${goals.join(', ')}?`;
     let timeoutId;
     try {
       const response = await Promise.race([
-        exa.search(query, {
-          type: 'auto',
-          numResults: 3,
-          contents: { highlights: true },
-        }),
+        exa.search(query, { type: 'auto', numResults: 3, contents: { highlights: true } }),
         new Promise((_, reject) => {
           timeoutId = setTimeout(
             () => reject(new Error('Exa request timed out after 12 seconds')),
@@ -102,7 +237,6 @@ async function ground(goals, activity, session) {
           );
         }),
       ]);
-
       return (response.results || [])
         .slice(0, 3)
         .map((result) => ({
@@ -129,43 +263,34 @@ async function decide(
   routineContext = [],
 ) {
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || 'gpt-5.6',
-      reasoning: { effort: 'low' },
-      max_output_tokens: 300,
-      instructions:
-        'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. When a session is supplied, assess the combined app list and total duration rather than treating it as one app. Personalize recommendations using the supplied habits only when relevant; never invent habits. When routineContext is supplied, use each listed routine only as optional context for the current time window; do not blanket-suppress nudges outside it. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
-      input: JSON.stringify({
-        goals,
-        activity,
-        session,
-        habits,
-        classification,
-        grounding,
-        routineContext,
-      }),
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'nudge_decision',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              shouldNotify: { type: 'boolean' },
-              message: { type: 'string' },
-              microAction: { type: 'string' },
-            },
-            required: ['shouldNotify', 'message', 'microAction'],
-          },
+    const result = await chatJson({
+      model: WRITER_MODEL,
+      name: 'nudge_decision',
+      schema: decisionSchema,
+      maxTokens: 300,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a thoughtful mobile-app nudge engine. Decide whether to notify the person. Do not nag when behavior is aligned or reasonably justified. If notifying, be warm, brief, and never guilt-trip. The message is 1-2 sentences. microAction is one concrete, immediately doable action. When a session is supplied, assess the combined app list and total duration rather than treating it as one app. Personalize recommendations using supplied habits only when relevant; never invent habits. Treat each routine as optional context only for its current window; do not blanket-suppress nudges outside it. For commuting, include a specific leave-by time when the input time makes that possible. When an active commute can support movement, suggest walking to the station or part of the route. When a reading goal fits transit time, suggest taking a book or audiobook along.',
         },
-      },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            goals,
+            activity,
+            session,
+            habits,
+            classification,
+            grounding,
+            routineContext,
+          }),
+        },
+      ],
     });
-    return { ...parseJson(response.output_text), error: false };
+    return { ...result, error: false };
   } catch (error) {
-    console.error('[decide] OpenAI failed:', error.message);
+    console.error('[decide] OpenRouter failed:', error.message);
     return fallbackDecision;
   }
 }
@@ -185,19 +310,24 @@ app.post('/nudge', async (req, res) => {
   const activeRoutines = activeRoutineContext(activity, routineContext);
   if (activeRoutines.length) console.log(`[nudge] ${routineSummary(activeRoutines)}`);
   const stageOne = await classify(goals, activity, session, habits, activeRoutines);
-  const grounding =
-    stageOne.classification === 'ambiguous' ? await ground(goals, activity, session) : [];
+  const groundingRequired =
+    stageOne.classification === 'ambiguous' ||
+    (Number.isFinite(stageOne.confidence) && stageOne.confidence < GROUNDING_CONFIDENCE_MIN);
+  const grounding = groundingRequired ? await ground(goals, activity, session) : [];
   const decision = await decide(
     goals,
     activity,
     session,
     habits,
-    stageOne,
+    stageOne.classification,
     grounding,
     activeRoutines,
   );
   res.json({
     classification: stageOne.classification,
+    ...(Number.isFinite(stageOne.confidence)
+      ? { confidence: stageOne.confidence, probabilities: stageOne.probabilities }
+      : {}),
     shouldNotify: decision.shouldNotify,
     message: decision.message,
     microAction: decision.microAction,
@@ -219,35 +349,29 @@ app.post('/parse-goals', async (req, res) => {
     const currentGoalsText = currentGoals.length
       ? currentGoals.map((goal, index) => `${index + 1}. ${goal}`).join('\n')
       : 'none';
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    const response = await openai.responses.create({
-      model: process.env.OPENAI_MODEL || 'gpt-5.6',
-      reasoning: { effort: 'low' },
-      max_output_tokens: 200,
-      instructions:
-        'Return the FULL updated goal list as concise, plain-language self-improvement goals. Start with the current goals exactly as given. Add the new goal from the user statement alongside them unless it clearly and explicitly replaces a specific existing goal. Never drop an existing goal unless the statement explicitly replaces it. Maximum three goals: if the list is already full and there is no explicit replacement, return the current goals unchanged. Return only the requested JSON.',
-      input: `Current goals:\n${currentGoalsText}\n\nNew statement from user: ${JSON.stringify(transcript.trim())}`,
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'parsed_goals',
-          strict: true,
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3 },
-            },
-            required: ['goals'],
-          },
+    const parsed = await chatJson({
+      model: PARSER_MODEL,
+      name: 'parsed_goals',
+      schema: goalsSchema,
+      maxTokens: 200,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Return the FULL updated goal list as concise, plain-language self-improvement goals. Start with the current goals exactly as given. Add the new goal from the user statement alongside them unless it clearly and explicitly replaces a specific existing goal. Never drop an existing goal unless the statement explicitly replaces it. Maximum three goals: if the list is already full and there is no explicit replacement, return the current goals unchanged.',
         },
-      },
+        {
+          role: 'user',
+          content: `Current goals:\n${currentGoalsText}\n\nNew statement from user: ${JSON.stringify(transcript.trim())}`,
+        },
+      ],
     });
-    const goals = parseJson(response.output_text)
-      .goals.map(String)
+    const goals = (Array.isArray(parsed.goals) ? parsed.goals : [])
+      .map(String)
       .map((goal) => goal.trim())
       .filter(Boolean)
       .slice(0, 3);
+    if (!goals.length) throw new Error('Model returned no goals');
     res.json({ goals });
   } catch (error) {
     console.error('[parse-goals] failed:', error.message);
@@ -257,4 +381,7 @@ app.post('/parse-goals', async (req, res) => {
   }
 });
 app.get('/health', (_req, res) => res.json({ ok: true }));
-app.listen(port, () => console.log(`nudge-engine listening on http://localhost:${port}`));
+if (require.main === module)
+  app.listen(port, () => console.log(`nudge-engine listening on http://localhost:${port}`));
+
+module.exports = { app };
