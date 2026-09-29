@@ -151,7 +151,7 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                 .build()
             manager.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Nudges", NotificationManager.IMPORTANCE_HIGH).apply {
+                NotificationChannel(CHANNEL_ID, "In-Tune check-ins", NotificationManager.IMPORTANCE_HIGH).apply {
                     setSound(soundUri, audioAttributes)
                     enableVibration(true)
                 },
@@ -167,7 +167,7 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val pendingIntent = PendingIntent.getActivity(applicationContext, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("A quick nudge")
+            .setContentTitle("In-Tune")
             .setContentText(nudge.message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(nudge.message))
             .setContentIntent(pendingIntent)

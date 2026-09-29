@@ -14,6 +14,7 @@ private val goalsKey = stringSetPreferencesKey("items")
 private val lastNotifiedAtKey = longPreferencesKey("last_notified_at")
 private val soundEnabledKey = booleanPreferencesKey("sound_enabled")
 private val routinePermissionPromptedKey = booleanPreferencesKey("routine_permission_prompted")
+const val MAX_GOALS = 3
 
 class GoalsRepository(private val context: Context) {
     val goals = context.goalDataStore.data.map { it[goalsKey]?.toList().orEmpty() }
@@ -21,7 +22,7 @@ class GoalsRepository(private val context: Context) {
     val routinePermissionPrompted = context.goalDataStore.data.map { it[routinePermissionPromptedKey] ?: false }
 
     suspend fun save(goals: List<String>) {
-        context.goalDataStore.edit { it[goalsKey] = goals.map(String::trim).filter(String::isNotBlank).take(3).toSet() }
+        context.goalDataStore.edit { it[goalsKey] = goals.map(String::trim).filter(String::isNotBlank).take(MAX_GOALS).toSet() }
     }
 
     suspend fun lastNotifiedAt(): Long = context.goalDataStore.data.first()[lastNotifiedAtKey] ?: 0L

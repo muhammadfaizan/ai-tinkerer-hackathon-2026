@@ -77,6 +77,9 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -107,11 +110,11 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.intune.BuildConfig
-import com.example.intune.ui.theme.ChipSubtitle
 import com.example.intune.ui.theme.LavenderBadge
 import com.example.intune.data.ActionTaken
 import com.example.intune.data.ActivityPayload
 import com.example.intune.data.GoalsRepository
+import com.example.intune.data.MAX_GOALS
 import com.example.intune.data.NudgeDao
 import com.example.intune.data.NudgeDatabase
 import com.example.intune.data.NudgeRecord
@@ -143,7 +146,6 @@ private const val HOME = "home"
 private const val LOGS = "logs"
 private const val PROGRESS = "progress"
 private const val PROFILE = "profile"
-private const val EDIT_GOALS = "edit-goals"
 private const val ROUTINE_PERMISSION = "routine-permission"
 private val screenPadding = 16.dp
 private val largeSpacing = 24.dp
@@ -225,12 +227,6 @@ fun GoalAwareApp(
                     onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } },
                 )
             }
-            composable(EDIT_GOALS) {
-                EditGoalsScreen(savedGoals, api, scope) { updatedGoals ->
-                    scope.launch { repository.save(updatedGoals) }
-                    navController.popBackStack()
-                }
-            }
             composable(PROGRESS) {
                 ProgressScreen(dao, soundEnabled) { route -> navController.navigate(route) { launchSingleTop = true } }
             }
@@ -245,7 +241,7 @@ fun GoalAwareApp(
                     routineDao = routineDao,
                     soundEnabled = soundEnabled,
                     onSoundChange = { enabled -> scope.launch { repository.saveSoundEnabled(enabled) } },
-                    onEditGoals = { navController.navigate(EDIT_GOALS) { launchSingleTop = true } },
+                    onGoalsChange = { updatedGoals -> scope.launch { repository.save(updatedGoals) } },
                     onNavigate = { route -> navController.navigate(route) { launchSingleTop = true } },
                     scope = scope,
                 )
@@ -365,8 +361,8 @@ private fun CoachScaffold(
 @Composable
 fun PermissionScreen(onOpenSettings: () -> Unit) = CoachScaffold("Usage access") { innerPadding ->
     Column(Modifier.fillMaxSize().padding(innerPadding).padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-        Text("Enable thoughtful nudges", style = MaterialTheme.typography.headlineSmall)
-        Text("To give you real nudges, this app needs to see which apps you're using — nothing leaves your device.")
+        Text("Enable thoughtful check-ins", style = MaterialTheme.typography.headlineSmall)
+        Text("To give you helpful check-ins, this app needs to see which apps you're using — nothing leaves your device.")
         Text("Android requires you to enable this manually in Settings.")
         Button(onClick = onOpenSettings) { Text("Open usage access settings") }
     }
@@ -390,9 +386,6 @@ private fun ActivityRecognitionPermissionScreen(onPermissionResult: (Boolean) ->
 
 @Composable
 fun OnboardingScreen(api: NudgeApi, scope: CoroutineScope, onSave: (List<String>) -> Unit) = GoalEditor("Welcome", emptyList(), api, scope, true, onSave)
-
-@Composable
-fun EditGoalsScreen(goals: List<String>, api: NudgeApi, scope: CoroutineScope, onSave: (List<String>) -> Unit) = GoalEditor("Edit goals", goals, api, scope, false, onSave)
 
 @Composable
 private fun GoalEditor(
@@ -425,7 +418,7 @@ private fun GoalEditor(
                 scope.launch {
                     runCatching { api.parseGoals(ParseGoalsRequest(transcript, goals.toList())) }
                         .onSuccess { response ->
-                            preview = response.goals.map(String::trim).filter(String::isNotBlank).take(3)
+                            preview = mergeGoals(goals.toList(), response.goals)
                             voiceState = null
                             status = if (preview.isNullOrEmpty()) "I couldn't find clear goals. Try again or type them manually." else null
                         }
@@ -448,7 +441,7 @@ private fun GoalEditor(
     CoachScaffold(title) { innerPadding ->
         Column(Modifier.fillMaxSize().padding(innerPadding).padding(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
             Text(if (initialGoals.isEmpty()) "What would you like to improve?" else "Keep your goals current", style = MaterialTheme.typography.headlineSmall)
-            Text("Add up to three goals. Voice suggestions are always shown for confirmation first.")
+            Text("Add up to $MAX_GOALS goals. Voice suggestions are always shown for confirmation first.")
             Box(Modifier.fillMaxWidth()) {
                 OutlinedTextField(
                     value = text,
@@ -483,9 +476,10 @@ private fun GoalEditor(
             } }
             Button(onClick = {
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                goals += text.trim(); text = ""
-            }, enabled = text.isNotBlank() && goals.size < 3) { Text("Add goal") }
-            goals.forEachIndexed { index, goal -> GoalChip(goal, index) { goals.remove(goal) } }
+                if (goals.size >= MAX_GOALS) status = "Goal limit reached. You can keep up to $MAX_GOALS goals."
+                else { goals += text.trim(); text = "" }
+            }, enabled = text.isNotBlank()) { Text("Add goal") }
+            goals.forEachIndexed { index, goal -> GoalChip(goal, index, onRemove = { goals.remove(goal) }) }
             preview?.let { heardGoals ->
                 ElevatedCard(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
                     Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -565,7 +559,7 @@ fun HomeScreen(
             item { Text("Your goals", style = MaterialTheme.typography.titleMedium) }
             item {
                 FlowRow(maxItemsInEachRow = 2, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    goals.forEachIndexed { index, goal -> GoalChip(goal, index) }
+                    goals.forEachIndexed { index, goal -> GoalChip(goal, index, onClick = { onNavigate(PROFILE) }) }
                 }
             }
             item { Text("Right now", style = MaterialTheme.typography.titleLarge) }
@@ -606,7 +600,7 @@ private fun startOfToday(): Long = Calendar.getInstance().apply {
 private fun TodayNudgeSummary(record: NudgeRecord) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(largeSpacing), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Today’s nudge", style = MaterialTheme.typography.titleMedium)
+            Text("Today’s check-in", style = MaterialTheme.typography.titleMedium)
             Text(record.message, style = MaterialTheme.typography.bodyLarge)
             Text(actionLabel(record.actionTaken), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -671,7 +665,7 @@ fun NudgeCard(nudge: NudgeResponse, soundEnabled: Boolean, onAction: (ActionTake
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Filled.Stars, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Text("Today’s nudge", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("From In-Tune", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
                 Text(nudge.message, style = MaterialTheme.typography.headlineLarge)
                 Text(nudge.microAction, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -779,6 +773,146 @@ fun LogsScreen(dao: NudgeDao, soundEnabled: Boolean, onNavigate: (String) -> Uni
     }
 }
 
+private fun mergeGoals(currentGoals: List<String>, suggestedGoals: List<String>): List<String> {
+    val merged = currentGoals.map(String::trim).filter(String::isNotBlank).toMutableList()
+    suggestedGoals.map(String::trim).filter(String::isNotBlank).forEach { suggestion ->
+        if (merged.none { it.equals(suggestion, ignoreCase = true) }) merged += suggestion
+    }
+    return merged.take(MAX_GOALS)
+}
+
+@Composable
+private fun ProfileGoals(
+    goals: List<String>,
+    api: NudgeApi,
+    scope: CoroutineScope,
+    snackbarHostState: SnackbarHostState,
+    onGoalsChange: (List<String>) -> Unit,
+) {
+    val context = LocalContext.current
+    var text by remember { mutableStateOf("") }
+    var editingGoal by remember { mutableStateOf<String?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var voiceState by remember { mutableStateOf<VoiceState?>(null) }
+    var voiceError by remember { mutableStateOf<String?>(null) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var preview by remember { mutableStateOf<List<String>?>(null) }
+    val voice = remember(context) {
+        GoalVoiceInput(
+            context,
+            onTranscript = { transcript ->
+                voiceState = VoiceState.PROCESSING
+                scope.launch {
+                    runCatching { api.parseGoals(ParseGoalsRequest(transcript, goals)) }
+                        .onSuccess { response ->
+                            preview = mergeGoals(goals, response.goals)
+                            status = if (goals.size >= MAX_GOALS) "Goal limit reached. Remove or rename a goal before adding another." else null
+                            voiceState = null
+                        }
+                        .onFailure { voiceState = null; voiceError = "Couldn't process that — try again?" }
+                }
+            },
+            onError = { message -> voiceState = null; voiceError = message },
+            onListening = { voiceState = VoiceState.LISTENING },
+            onProcessing = { voiceState = VoiceState.PROCESSING },
+        )
+    }
+    DisposableEffect(voice) { onDispose { voice.destroy() } }
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { voiceError = null; preview = null; voice.start() }
+        else status = "Microphone permission was denied. You can always type your goals manually."
+    }
+    fun startOrStopVoice() {
+        if (voiceState == VoiceState.LISTENING) voice.stop()
+        else if (!android.speech.SpeechRecognizer.isRecognitionAvailable(context)) status = "Voice input isn't available on this device. Please type your goal."
+        else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceError = null
+            preview = null
+            voice.start()
+        } else microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Goals", style = MaterialTheme.typography.titleLarge)
+            if (goals.isEmpty()) Text("Add a goal to get started.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            goals.forEachIndexed { index, goal ->
+                if (editingGoal == goal) {
+                    OutlinedTextField(renameText, { renameText = it }, Modifier.fillMaxWidth(), label = { Text("Goal") })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            val renamed = renameText.trim()
+                            if (renamed.isBlank()) status = "A goal cannot be empty."
+                            else if (goals.any { it != goal && it.equals(renamed, ignoreCase = true) }) status = "That goal is already on your list."
+                            else {
+                                onGoalsChange(goals.map { if (it == goal) renamed else it })
+                                editingGoal = null
+                            }
+                        }) { Text("Save") }
+                        TextButton(onClick = { editingGoal = null }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Cancel") }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        GoalChip(goal, index, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { editingGoal = goal; renameText = goal }) {
+                            Icon(Icons.Outlined.Edit, contentDescription = "Rename $goal")
+                        }
+                        IconButton(onClick = {
+                            val previousGoals = goals
+                            onGoalsChange(goals.filter { it != goal })
+                            scope.launch {
+                                if (snackbarHostState.showSnackbar("Goal removed", "Undo") == SnackbarResult.ActionPerformed)
+                                    onGoalsChange(previousGoals)
+                            }
+                        }) { Icon(Icons.Outlined.Close, contentDescription = "Remove $goal") }
+                    }
+                }
+            }
+            Box(Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Add a goal") },
+                )
+                IconButton(
+                    modifier = Modifier.align(Alignment.CenterEnd),
+                    enabled = voiceState != VoiceState.PROCESSING,
+                    onClick = ::startOrStopVoice,
+                ) {
+                    Icon(if (voiceState == VoiceState.LISTENING) Icons.Outlined.Close else Icons.Outlined.Mic, contentDescription = if (voiceState == VoiceState.LISTENING) "Stop recording" else "Speak a goal")
+                }
+            }
+            Button(onClick = {
+                val goal = text.trim()
+                if (goals.size >= MAX_GOALS) status = "Goal limit reached. You can keep up to $MAX_GOALS goals."
+                else if (goals.any { it.equals(goal, ignoreCase = true) }) status = "That goal is already on your list."
+                else { onGoalsChange(goals + goal); text = "" }
+            }, enabled = text.isNotBlank()) { Text("Add goal") }
+            voiceState?.let { Text(if (it == VoiceState.LISTENING) "Listening... Tap the microphone to stop." else "Processing...") }
+            preview?.let { heardGoals ->
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Here's what I heard. Looks right?", style = MaterialTheme.typography.titleMedium)
+                        heardGoals.forEachIndexed { index, goal -> GoalChip(goal, index) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onGoalsChange(heardGoals); preview = null }) { Text("Confirm") }
+                            TextButton(onClick = { preview = null; startOrStopVoice() }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Try again") }
+                            TextButton(onClick = { text = heardGoals.lastOrNull().orEmpty(); preview = null }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Edit manually") }
+                        }
+                    }
+                }
+            }
+            voiceError?.let { error ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(error, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = ::startOrStopVoice, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Retry") }
+                }
+            }
+            status?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 fun ProfileScreen(
@@ -788,7 +922,7 @@ fun ProfileScreen(
     routineDao: RoutineDao,
     soundEnabled: Boolean,
     onSoundChange: (Boolean) -> Unit,
-    onEditGoals: () -> Unit,
+    onGoalsChange: (List<String>) -> Unit,
     onNavigate: (String) -> Unit,
     scope: CoroutineScope,
 ) {
@@ -800,21 +934,11 @@ fun ProfileScreen(
     var developerOptionsEnabled by remember { mutableStateOf(false) }
     var versionTapCount by remember { mutableStateOf(0) }
     var lastVersionTapAt by remember { mutableStateOf(0L) }
+    val snackbarHostState = remember { SnackbarHostState() }
     CoachScaffold("Profile", PROFILE, onNavigate = onNavigate, soundEnabled = soundEnabled) { innerPadding ->
-        LazyColumn(Modifier.fillMaxSize().padding(innerPadding), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
-            item {
-                ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(screenPadding), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text("Goals", style = MaterialTheme.typography.titleLarge)
-                            IconButton(onClick = onEditGoals) { Icon(Icons.Outlined.Edit, contentDescription = "Edit goals") }
-                        }
-                        FlowRow(maxItemsInEachRow = 2, horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            goals.forEachIndexed { index, goal -> GoalChip(goal, index) }
-                        }
-                    }
-                }
-            }
+        Box(Modifier.fillMaxSize().padding(innerPadding)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(screenPadding), verticalArrangement = Arrangement.spacedBy(screenPadding)) {
+            item { ProfileGoals(goals, api, scope, snackbarHostState, onGoalsChange) }
             item { Text("Routines", style = MaterialTheme.typography.titleLarge) }
             if (routines.isEmpty()) item { Text("No labeled routines yet.") }
             items(routines, key = { it.id }) { routine ->
@@ -875,6 +999,8 @@ fun ProfileScreen(
                     },
                 )
             }
+            }
+            SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter).padding(screenPadding))
         }
     }
     if (showTrustDialog) AlertDialog(onDismissRequest = { showTrustDialog = false }, confirmButton = { TextButton(onClick = { showTrustDialog = false }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Got it") } }, title = { Text("Your privacy") }, text = { Text("Nothing here is ever sent to a server. All your history and progress stays only on your phone.") })
@@ -940,10 +1066,10 @@ private fun DeveloperTools(
                                                 goalsSnapshot = goals.joinToString(),
                                             ),
                                         )
-                                        status = "Nudge ready on Home."
-                                    } else status = "No nudge needed for this activity."
+                                        status = "Check-in ready on Home."
+                                    } else status = "No check-in needed for this activity."
                                 }
-                                .onFailure { status = "Could not reach the nudge server: ${it.message}" }
+                                .onFailure { status = "Could not reach the check-in server: ${it.message}" }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -980,12 +1106,18 @@ private fun actionLabel(action: ActionTaken): String = when (action) {
 }
 
 @Composable
-private fun GoalChip(goal: String, index: Int, onRemove: (() -> Unit)? = null) {
+private fun GoalChip(
+    goal: String,
+    index: Int,
+    modifier: Modifier = Modifier,
+    onRemove: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
     val lavender = index % 2 == 0
     val fill = if (lavender) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
     val badge = if (lavender) LavenderBadge else MaterialTheme.colorScheme.secondary
     Card(
-        modifier = Modifier.widthIn(min = 164.dp, max = 220.dp),
+        modifier = modifier.widthIn(min = 164.dp, max = 220.dp).then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = fill),
     ) {
@@ -997,9 +1129,8 @@ private fun GoalChip(goal: String, index: Int, onRemove: (() -> Unit)? = null) {
             Box(Modifier.size(40.dp).background(badge, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(goalIcon(goal), contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
+            Column(Modifier.weight(1f)) {
                 Text(goal, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Goal for today", style = MaterialTheme.typography.labelMedium, color = ChipSubtitle, maxLines = 1)
             }
             onRemove?.let { remove ->
                 IconButton(onClick = remove) {
