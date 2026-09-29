@@ -384,4 +384,4 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 if (require.main === module)
   app.listen(port, () => console.log(`nudge-engine listening on http://localhost:${port}`));
 
-module.exports = { app };
+module.exports = app;
