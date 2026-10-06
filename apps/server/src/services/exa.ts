@@ -1,5 +1,5 @@
 import Exa from 'exa-js';
-import type { Activity, Session } from '../types';
+import type { Activity, Session } from '../routes/types';
 
 const summary = (activity?: Activity, session?: Session) =>
   activity

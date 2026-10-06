@@ -18,4 +18,10 @@ export type Routine = {
   approxEndHour: number;
 };
 
-export type Classification = 'aligned' | 'misaligned' | 'ambiguous';
+export type NudgeBody = {
+  goals?: unknown;
+  activity?: Activity;
+  session?: Session;
+  habits?: unknown;
+  routineContext?: unknown;
+};

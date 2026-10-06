@@ -1,4 +1,4 @@
-import type { Activity, Routine } from './types';
+import type { Activity, Routine } from './routes/types';
 
 const timeHour = (value?: string) => {
   const match = value?.match(/^(\d{1,2}):\d{2}$/);

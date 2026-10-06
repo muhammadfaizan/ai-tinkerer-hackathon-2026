@@ -1,5 +1,6 @@
 import axios from 'axios';
-import type { Activity, Classification, Routine, Session } from '../types';
+import type { Activity, Routine, Session } from '../routes/types';
+import type { ChatJsonRequest, Classification, JsonSchema, StageOne } from './types';
 
 const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DECISIONS_URL = 'https://openrouter.ai/api/alpha/decisions';
@@ -21,20 +22,13 @@ const parseJson = <T>(value: unknown): T => {
   return JSON.parse(match ? match[0] : String(value)) as T;
 };
 
-type JsonSchema = Record<string, unknown>;
 export async function chatJson<T>({
   model,
   messages,
   schema,
   name,
   maxTokens,
-}: {
-  model: string;
-  messages: { role: string; content: string }[];
-  schema: JsonSchema;
-  name: string;
-  maxTokens: number;
-}): Promise<T> {
+}: ChatJsonRequest): Promise<T> {
   const request = {
     model,
     messages,
@@ -126,12 +120,6 @@ const state = (
   habits: habits || null,
 });
 
-export type StageOne = {
-  classification: Classification;
-  confidence?: number;
-  probabilities?: Record<string, number>;
-  path: string;
-};
 export async function classifyWithJev(
   goals: string[],
   activity?: Activity,

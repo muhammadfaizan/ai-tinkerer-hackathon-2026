@@ -10,20 +10,12 @@ import {
   parserModel,
   writerModel,
 } from '../services/openrouter';
-import type { Activity, Routine, Session } from '../types';
+import type { Decision } from '../services/types';
+import type { Activity, NudgeBody, Routine, Session } from './types';
 
 const router = Router();
 const GROUNDING_CONFIDENCE_MIN = Number(process.env.GROUNDING_CONFIDENCE_MIN || 0.6);
 const fallbackDecision = { shouldNotify: false, message: '', microAction: '', error: true };
-type NudgeBody = {
-  goals?: unknown;
-  activity?: Activity;
-  session?: Session;
-  habits?: unknown;
-  routineContext?: unknown;
-};
-type Decision = { shouldNotify: boolean; message: string; microAction: string };
-
 async function classify(
   goals: string[],
   activity: Activity | undefined,
