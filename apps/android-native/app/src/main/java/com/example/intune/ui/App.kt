@@ -422,7 +422,8 @@ private fun GoalEditor(
                             voiceState = null
                             status = if (preview.isNullOrEmpty()) "I couldn't find clear goals. Try again or type them manually." else null
                         }
-                        .onFailure {
+                        .onFailure { error ->
+                            Log.e("GoalVoiceInput", "POST /parse-goals failed", error)
                             voiceState = null
                             voiceError = "Couldn't process that — try again?"
                         }
@@ -809,7 +810,11 @@ private fun ProfileGoals(
                             status = if (goals.size >= MAX_GOALS) "Goal limit reached. Remove or rename a goal before adding another." else null
                             voiceState = null
                         }
-                        .onFailure { voiceState = null; voiceError = "Couldn't process that — try again?" }
+                        .onFailure { error ->
+                            Log.e("GoalVoiceInput", "POST /parse-goals failed", error)
+                            voiceState = null
+                            voiceError = "Couldn't process that — try again?"
+                        }
                 }
             },
             onError = { message -> voiceState = null; voiceError = message },
@@ -1055,7 +1060,10 @@ private fun DeveloperTools(
                         scope.launch {
                             runCatching { api.nudge(NudgeRequest(goals, scenario.activity)) }
                                 .onSuccess { response ->
-                                    if (response.shouldNotify) {
+                                    if (response.error) {
+                                        Log.e("NudgeWorker", "Demo /nudge response reported a backend error")
+                                        status = "The check-in server could not complete this request. Try again shortly."
+                                    } else if (response.shouldNotify) {
                                         dao.insert(
                                             NudgeRecord(
                                                 timestamp = System.currentTimeMillis(),

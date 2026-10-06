@@ -105,7 +105,10 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
             return Result.failure()
         }
         Log.d(TAG, "Received /nudge response: $response")
-        repository.saveLastNotifiedAt(now)
+        if (response.error) {
+            Log.e(TAG, "Backend returned an error response; not starting cooldown and retrying later")
+            return Result.retry()
+        }
         if (response.shouldNotify) {
             Log.d(TAG, "Response requires notification")
             val recordId = NudgeDatabase.get(applicationContext).nudgeDao().insert(NudgeRecord(
@@ -116,27 +119,28 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
                 microAction = response.microAction,
                 goalsSnapshot = goals.joinToString(),
             ))
-            notify(response, recordId)
+            if (notify(response, recordId)) repository.saveLastNotifiedAt(now)
+            else Log.w(TAG, "Notification was not shown; cooldown was not started")
         } else {
             Log.d(TAG, "Response does not require notification")
         }
         return Result.success()
     }
 
-    private fun notify(nudge: NudgeResponse, recordId: Long) {
+    private fun notify(nudge: NudgeResponse, recordId: Long): Boolean {
         Log.d(TAG, "Preparing to build and show notification")
         val notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             applicationContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
         Log.d(TAG, "POST_NOTIFICATIONS granted: $notificationsGranted")
         if (!notificationsGranted) {
             Log.w(TAG, "Notification not shown: POST_NOTIFICATIONS is not granted")
-            return
+            return false
         }
         val notificationManagerCompat = NotificationManagerCompat.from(applicationContext)
         Log.d(TAG, "App notifications enabled: ${notificationManagerCompat.areNotificationsEnabled()}")
         if (!notificationManagerCompat.areNotificationsEnabled()) {
             Log.w(TAG, "Notification not shown: notifications are disabled for the app")
-            return
+            return false
         }
         val powerManager = applicationContext.getSystemService(PowerManager::class.java)
         Log.d(
@@ -179,8 +183,10 @@ class NudgeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         try {
             notificationManagerCompat.notify(NUDGE_NOTIFICATION_ID, notification)
             Log.d(TAG, "NotificationManagerCompat.notify($NUDGE_NOTIFICATION_ID) completed")
+            return true
         } catch (error: Exception) {
             Log.e(TAG, "NotificationManagerCompat.notify($NUDGE_NOTIFICATION_ID) failed", error)
+            return false
         }
     }
 

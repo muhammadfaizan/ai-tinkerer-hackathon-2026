@@ -30,6 +30,7 @@ data class NudgeResponse(
     val message: String,
     val microAction: String,
     val groundingUsed: Boolean,
+    val error: Boolean = false,
 )
 data class ParseGoalsRequest(val transcript: String, val existingGoals: List<String>)
 data class ParseGoalsResponse(val goals: List<String>)
