@@ -22,6 +22,7 @@ const scenarios = [
     },
   },
 ];
+
 async function run() {
   for (const scenario of scenarios) {
     try {
@@ -33,8 +34,9 @@ async function run() {
       console.log(`\n${scenario.name} (${response.status})`);
       console.log(JSON.stringify(await response.json(), null, 2));
     } catch (error) {
-      console.error(`\n${scenario.name} failed:`, error.message);
+      console.error(`\n${scenario.name} failed:`, error instanceof Error ? error.message : error);
     }
   }
 }
-run();
+
+void run();

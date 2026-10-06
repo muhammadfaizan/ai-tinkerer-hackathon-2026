@@ -1,9 +1,11 @@
 const js = require('@eslint/js');
 const prettier = require('eslint-config-prettier');
+const tseslint = require('typescript-eslint');
 
 module.exports = [
-  { ignores: ['node_modules/**', 'coverage/**'] },
+  { ignores: ['node_modules/**', 'coverage/**', 'dist/**'] },
   js.configs.recommended,
+  ...tseslint.configs.recommended,
   {
     files: ['**/*.js'],
     languageOptions: {
@@ -27,7 +29,14 @@ module.exports = [
     },
   },
   {
-    files: ['test/**/*.test.js'],
+    files: ['**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
+  { rules: { '@typescript-eslint/no-require-imports': 'off' } },
+  {
+    files: ['test/**/*.test.{js,ts}'],
     languageOptions: {
       globals: {
         after: 'readonly',

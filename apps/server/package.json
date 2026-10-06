@@ -4,10 +4,15 @@
   "description": "Goal-aware behavior nudge backend",
   "main": "server.js",
   "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "vercel-build": "npm run build",
+    "prestart": "npm run build",
     "start": "node server.js",
-    "test": "mocha \"test/**/*.test.js\" && node routine-context.test.js",
-    "test:demo": "node test.js",
-    "test:routines": "node routine-context.test.js",
+    "dev": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "mocha --node-option import=tsx \"test/**/*.test.ts\" && tsx routine-context.test.ts",
+    "test:demo": "tsx test.ts",
+    "test:routines": "tsx routine-context.test.ts",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -24,12 +29,20 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/chai": "^5.2.3",
+    "@types/express": "^5.0.6",
+    "@types/mocha": "^10.0.10",
+    "@types/nock": "^10.0.3",
+    "@types/node": "^26.6.4",
     "chai": "^4.5.0",
     "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
     "mocha": "^12.0.2",
     "nock": "^14.0.17",
     "prettier": "^3.9.6",
-    "swagger-ui-watcher": "^2.1.14"
+    "swagger-ui-watcher": "^2.1.14",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.1"
   }
 }

@@ -5,4 +5,6 @@ apps/android-native/build.gradle.kts
 DESIGN_SYSTEM.md
 output/imagegen/*
 
+apps/server/dist/
+
 generate-ui-references.js

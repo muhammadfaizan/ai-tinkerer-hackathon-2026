@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { activeRoutineContext, routineSummary } = require('./routine-context');
+const { activeRoutineContext, routineSummary } = require('./src/routine-context');
 
 const routines = [
   { label: 'School drop-off', dayPattern: 'weekday', approxStartHour: 7, approxEndHour: 8 },

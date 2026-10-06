@@ -2,7 +2,7 @@ const { strict: assert } = require('node:assert');
 const { once } = require('node:events');
 const { expect } = require('chai');
 const nock = require('nock');
-const app = require('../server');
+const app = require('../src/app').default;
 
 const openRouter = 'https://openrouter.ai';
 let server;
