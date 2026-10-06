@@ -1,9 +1,19 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.ktlint)
 }
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.isFile) file.inputStream().use(::load)
+}
+val debugBackendUrl = localProperties
+    .getProperty("backend.url.debug", "http://10.0.2.2:3000")
+    .trimEnd('/')
 
 android {
     namespace = "com.example.intune"
@@ -22,7 +32,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", "BASE_URL", "\"$debugBackendUrl\"")
+        }
         release {
+            buildConfigField("String", "BASE_URL", "\"https://nudge-backend-olive.vercel.app\"")
             optimization {
                 enable = false
             }
@@ -34,6 +48,7 @@ android {
     }
     buildFeatures {
         compose = true
+        // Required for the per-build backend URL generated below.
         buildConfig = true
     }
 }
