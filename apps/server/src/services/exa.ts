@@ -37,8 +37,8 @@ export async function ground(goals: string[], activity?: Activity, session?: Ses
     } finally {
       clearTimeout(timeoutId);
     }
-  } catch (error) {
-    console.error('[ground] Exa failed:', error instanceof Error ? error.message : error);
+  } catch {
+    console.error('[ground] provider request failed');
     return [];
   }
 }

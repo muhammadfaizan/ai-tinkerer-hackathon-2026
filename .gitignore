@@ -8,3 +8,4 @@ output/imagegen/*
 apps/server/dist/
 
 generate-ui-references.js
+Development-log.md

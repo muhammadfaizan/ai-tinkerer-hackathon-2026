@@ -22,10 +22,14 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@upstash/ratelimit": "^2.2.0",
+    "@upstash/redis": "^1.39.0",
     "axios": "^1.8.4",
     "dotenv": "^16.5.0",
     "exa-js": "^2.0.0",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "helmet": "^8.3.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,3 +1,6 @@
+process.env.APP_API_KEY = 'test-app-key';
+process.env.NODE_ENV = 'test';
+
 const { strict: assert } = require('node:assert');
 const { once } = require('node:events');
 const { expect } = require('chai');
@@ -8,6 +11,8 @@ const openRouter = 'https://openrouter.ai';
 let server;
 let baseUrl;
 let savedExaKey;
+let savedServiceDisabled;
+let savedNodeEnv;
 
 const completion = (value) => ({ choices: [{ message: { content: JSON.stringify(value) } }] });
 const jevAnswer = (choice, confidence = 0.9) => ({
@@ -26,10 +31,11 @@ const mockChat = (value, check = () => true) =>
     .post('/api/v1/chat/completions', (body) => check(body))
     .reply(200, completion(value));
 
-async function post(path, body) {
+const appKeyHeaders = { 'X-App-Key': process.env.APP_API_KEY };
+async function post(path, body, headers = appKeyHeaders) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
   return { status: response.status, body: await response.json() };
@@ -37,6 +43,8 @@ async function post(path, body) {
 
 before(async () => {
   savedExaKey = process.env.EXA_API_KEY;
+  savedServiceDisabled = process.env.SERVICE_DISABLED;
+  savedNodeEnv = process.env.NODE_ENV;
   delete process.env.EXA_API_KEY;
   nock.disableNetConnect();
   nock.enableNetConnect('127.0.0.1');
@@ -51,6 +59,9 @@ after(async () => {
   nock.cleanAll();
   nock.enableNetConnect();
   if (savedExaKey) process.env.EXA_API_KEY = savedExaKey;
+  if (savedServiceDisabled) process.env.SERVICE_DISABLED = savedServiceDisabled;
+  else delete process.env.SERVICE_DISABLED;
+  if (savedNodeEnv) process.env.NODE_ENV = savedNodeEnv;
   await new Promise((resolve) => server.close(resolve));
 });
 
@@ -67,7 +78,13 @@ describe('POST /nudge', () => {
       expect(state.session).to.equal(null);
       return true;
     });
-    mockChat({ shouldNotify: true, message: 'Read a page.', microAction: 'Open your book.' });
+    mockChat(
+      { shouldNotify: true, message: 'Read a page.', microAction: 'Open your book.' },
+      ({ messages }) => {
+        expect(messages.at(-1).content).to.match(/^<untrusted-input>/);
+        return true;
+      },
+    );
 
     const result = await post('/nudge', {
       goals: ['read more books'],
@@ -83,7 +100,10 @@ describe('POST /nudge', () => {
   it('grounds ambiguous or low-confidence Jev results before writing', async () => {
     mockJev('aligned', 0.4);
     mockChat({ shouldNotify: false, message: '', microAction: '' }, ({ messages }) => {
-      const input = JSON.parse(messages.at(-1).content);
+      const content = messages.at(-1).content;
+      const input = JSON.parse(
+        content.slice('<untrusted-input>'.length, -'</untrusted-input>'.length),
+      );
       expect(input.classification).to.equal('aligned');
       expect(input.grounding).to.deep.equal([]);
       return true;
@@ -154,7 +174,7 @@ describe('POST /nudge', () => {
   it('rejects malformed requests without calling providers', async () => {
     const result = await post('/nudge', { goals: [], activity: { app: 'Instagram' } });
     expect(result.status).to.equal(400);
-    expect(result.body.error).to.match(/non-empty goals/);
+    expect(result.body).to.deep.equal({ error: 'Invalid request.' });
   });
 
   it('keeps the safe no-notification fallback when the writer fails twice', async () => {
@@ -174,13 +194,26 @@ describe('POST /nudge', () => {
       error: true,
     });
   });
+
+  it('rejects malformed writer output before responding', async () => {
+    mockJev('misaligned', 0.9);
+    mockChat({ shouldNotify: false, message: '', microAction: '', extra: true });
+
+    const result = await post('/nudge', {
+      goals: ['read more books'],
+      activity: { app: 'Instagram', durationMin: 30, timeOfDay: '21:00' },
+    });
+
+    expect(result.body).to.include({ shouldNotify: false, error: true });
+  });
 });
 
 describe('POST /parse-goals', () => {
   it('returns a merged full goal list', async () => {
     mockChat({ goals: ['read more books', 'walk more', 'save more money'] }, ({ messages }) => {
-      expect(messages.at(-1).content).to.include('1. read more books');
-      expect(messages.at(-1).content).to.include('2. walk more');
+      expect(messages.at(-1).content).to.include('<untrusted-data>');
+      expect(messages.at(-1).content).to.include('read more books');
+      expect(messages.at(-1).content).to.include('walk more');
       return true;
     });
 
@@ -205,5 +238,66 @@ describe('POST /parse-goals', () => {
 
     expect(replacement.body).to.deep.equal({ goals: ['save more money'] });
     expect(invalid.status).to.equal(400);
+  });
+
+  it('rejects malformed parser output before responding', async () => {
+    mockChat({ goals: ['read more books'], extra: true });
+    const result = await post('/parse-goals', {
+      transcript: 'I want to read more books',
+      existingGoals: [],
+    });
+
+    expect(result).to.deep.equal({
+      status: 502,
+      body: { error: 'Could not parse spoken goals. Please try again or type them manually.' },
+    });
+  });
+});
+
+describe('security middleware', () => {
+  it('allows health without an app key and rejects missing or wrong keys elsewhere', async () => {
+    const health = await fetch(`${baseUrl}/health`);
+    const missing = await post(
+      '/nudge',
+      { goals: ['read more books'], activity: { app: 'Instagram' } },
+      {},
+    );
+    const wrong = await post(
+      '/nudge',
+      { goals: ['read more books'], activity: { app: 'Instagram' } },
+      { 'X-App-Key': 'wrong-key' },
+    );
+
+    expect(health.status).to.equal(200);
+    expect(await health.json()).to.deep.equal({ ok: true });
+    expect(missing).to.deep.equal({ status: 401, body: { error: 'Unauthorized.' } });
+    expect(wrong).to.deep.equal({ status: 401, body: { error: 'Unauthorized.' } });
+  });
+
+  it('returns generic failures for oversized JSON and an enabled kill switch', async () => {
+    const oversized = await post('/parse-goals', {
+      transcript: 'x'.repeat(21_000),
+      existingGoals: [],
+    });
+    process.env.SERVICE_DISABLED = 'true';
+    const disabled = await post('/nudge', {
+      goals: ['read more books'],
+      activity: { app: 'Instagram' },
+    });
+    delete process.env.SERVICE_DISABLED;
+
+    expect(oversized).to.deep.equal({ status: 400, body: { error: 'Invalid request.' } });
+    expect(disabled).to.deep.equal({ status: 503, body: { error: 'Service unavailable.' } });
+  });
+
+  it('fails closed in production when Upstash is not configured', async () => {
+    process.env.NODE_ENV = 'production';
+    const result = await post('/nudge', {
+      goals: ['read more books'],
+      activity: { app: 'Instagram' },
+    });
+    process.env.NODE_ENV = 'test';
+
+    expect(result).to.deep.equal({ status: 503, body: { error: 'Service unavailable.' } });
   });
 });

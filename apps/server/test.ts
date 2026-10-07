@@ -1,4 +1,5 @@
 const baseUrl = process.env.NUDGE_ENGINE_URL || 'http://localhost:3000';
+const appKey = process.env.APP_API_KEY;
 const scenarios = [
   {
     name: 'Instagram vs reading',
@@ -28,7 +29,7 @@ async function run() {
     try {
       const response = await fetch(`${baseUrl}/nudge`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(appKey ? { 'X-App-Key': appKey } : {}) },
         body: JSON.stringify(scenario.body),
       });
       console.log(`\n${scenario.name} (${response.status})`);
