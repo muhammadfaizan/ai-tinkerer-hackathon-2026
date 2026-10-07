@@ -188,3 +188,17 @@ peach/indigo palette (prompt was given, confirm if run).
   values; only `.env.example` placeholders were present. The scan was
   pattern-based, so it is not a substitute for rotating a credential
   that is suspected to have leaked elsewhere.
+
+## 2026-10-07 — Server entitlements
+- Added Redis-backed per-install entitlements in `apps/server`: missing
+  or expired records resolve to the free tier (3 goals); pro permits 10.
+  Records are stored as `entitlement:{installId}` and admin grants use
+  source `admin`.
+- Added `GET /entitlement` (app key + UUID `X-Install-Id`) and
+  `POST /admin/entitlement` (separate constant-time Bearer
+  `ADMIN_API_KEY`, 10/min IP limit, hidden with 404 when unconfigured).
+  The service kill switch covers both routes.
+- `/nudge` and `/parse-goals` now reject goal lists over the caller's
+  effective tier with `403 {"error":"goal_limit"}`. Android was not
+  changed: it must send a stable UUID `X-Install-Id` before a Pro grant
+  can be resolved for that installation.

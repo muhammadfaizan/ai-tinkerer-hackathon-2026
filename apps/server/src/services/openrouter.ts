@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { z } from 'zod';
 import type { Activity, Routine, Session } from '../routes/types';
+import { PRO_MAX_GOALS } from './entitlements';
 import type { ChatJsonRequest, Classification, JsonSchema, StageOne } from './types';
 
 const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -36,7 +37,7 @@ const decisionOutputSchema = z
   })
   .strict();
 export const goalsOutputSchema = z
-  .object({ goals: z.array(z.string().trim().min(1).max(120)).min(1).max(3) })
+  .object({ goals: z.array(z.string().trim().min(1).max(120)).min(1).max(PRO_MAX_GOALS) })
   .strict();
 
 export async function chatJson<T>({
@@ -104,7 +105,9 @@ export const decisionSchema: JsonSchema = {
 export const goalsSchema: JsonSchema = {
   type: 'object',
   additionalProperties: false,
-  properties: { goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 3 } },
+  properties: {
+    goals: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: PRO_MAX_GOALS },
+  },
   required: ['goals'],
 };
 

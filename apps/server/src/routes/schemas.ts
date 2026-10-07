@@ -1,6 +1,6 @@
 import { z } from 'zod';
+import { PRO_MAX_GOALS } from '../services/entitlements';
 
-export const MAX_GOALS = 3;
 export const healthRequestSchema = z.object({}).strict();
 const shortText = (maxLength: number) => z.string().trim().min(1).max(maxLength);
 
@@ -39,7 +39,7 @@ const routineSchema = z
 
 export const nudgeRequestSchema = z
   .object({
-    goals: z.array(shortText(120)).min(1).max(MAX_GOALS),
+    goals: z.array(shortText(120)).min(1).max(PRO_MAX_GOALS),
     activity: activitySchema.optional(),
     session: sessionSchema.optional(),
     habits: z.string().trim().max(1_000).optional().default(''),
@@ -51,6 +51,14 @@ export const nudgeRequestSchema = z
 export const parseGoalsRequestSchema = z
   .object({
     transcript: shortText(1_000),
-    existingGoals: z.array(shortText(120)).max(MAX_GOALS).optional().default([]),
+    existingGoals: z.array(shortText(120)).max(PRO_MAX_GOALS).optional().default([]),
+  })
+  .strict();
+
+export const adminEntitlementRequestSchema = z
+  .object({
+    installId: z.string().uuid(),
+    tier: z.enum(['free', 'pro']),
+    expiresAt: z.string().datetime({ offset: true }).optional(),
   })
   .strict();

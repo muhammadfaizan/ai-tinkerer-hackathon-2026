@@ -6,6 +6,7 @@ const { once } = require('node:events');
 const { expect } = require('chai');
 const nock = require('nock');
 const app = require('../src/app').default;
+const { publicEntitlement } = require('../src/services/entitlements');
 
 const openRouter = 'https://openrouter.ai';
 let server;
@@ -13,6 +14,7 @@ let baseUrl;
 let savedExaKey;
 let savedServiceDisabled;
 let savedNodeEnv;
+let savedAdminKey;
 
 const completion = (value) => ({ choices: [{ message: { content: JSON.stringify(value) } }] });
 const jevAnswer = (choice, confidence = 0.9) => ({
@@ -41,10 +43,16 @@ async function post(path, body, headers = appKeyHeaders) {
   return { status: response.status, body: await response.json() };
 }
 
+async function get(path, headers = appKeyHeaders) {
+  const response = await fetch(`${baseUrl}${path}`, { headers });
+  return { status: response.status, body: await response.json() };
+}
+
 before(async () => {
   savedExaKey = process.env.EXA_API_KEY;
   savedServiceDisabled = process.env.SERVICE_DISABLED;
   savedNodeEnv = process.env.NODE_ENV;
+  savedAdminKey = process.env.ADMIN_API_KEY;
   delete process.env.EXA_API_KEY;
   nock.disableNetConnect();
   nock.enableNetConnect('127.0.0.1');
@@ -62,6 +70,8 @@ after(async () => {
   if (savedServiceDisabled) process.env.SERVICE_DISABLED = savedServiceDisabled;
   else delete process.env.SERVICE_DISABLED;
   if (savedNodeEnv) process.env.NODE_ENV = savedNodeEnv;
+  if (savedAdminKey) process.env.ADMIN_API_KEY = savedAdminKey;
+  else delete process.env.ADMIN_API_KEY;
   await new Promise((resolve) => server.close(resolve));
 });
 
@@ -251,6 +261,64 @@ describe('POST /parse-goals', () => {
       status: 502,
       body: { error: 'Could not parse spoken goals. Please try again or type them manually.' },
     });
+  });
+});
+
+describe('entitlements', () => {
+  const installId = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const fourGoals = ['one', 'two', 'three', 'four'];
+  const installHeaders = { ...appKeyHeaders, 'X-Install-Id': installId };
+
+  it('returns the default free entitlement and requires a UUID install id', async () => {
+    const entitlement = await get('/entitlement', installHeaders);
+    const invalid = await get('/entitlement', { ...appKeyHeaders, 'X-Install-Id': 'not-a-uuid' });
+
+    expect(entitlement).to.deep.equal({ status: 200, body: { tier: 'free', maxGoals: 3 } });
+    expect(invalid).to.deep.equal({ status: 400, body: { error: 'Invalid request.' } });
+  });
+
+  it('rejects more than the free goal limit before calling providers', async () => {
+    const nudge = await post(
+      '/nudge',
+      { goals: fourGoals, activity: { app: 'Instagram' } },
+      installHeaders,
+    );
+    const parser = await post(
+      '/parse-goals',
+      { transcript: 'another goal', existingGoals: fourGoals },
+      installHeaders,
+    );
+
+    expect(nudge).to.deep.equal({ status: 403, body: { error: 'goal_limit' } });
+    expect(parser).to.deep.equal({ status: 403, body: { error: 'goal_limit' } });
+  });
+
+  it('maps pro and expired stored entitlements to their effective public limits', () => {
+    expect(publicEntitlement({ tier: 'pro', source: 'admin' })).to.deep.equal({
+      tier: 'pro',
+      maxGoals: 10,
+    });
+    expect(
+      publicEntitlement({ tier: 'pro', source: 'admin', expiresAt: '2020-01-01T00:00:00.000Z' }),
+    ).to.deep.equal({ tier: 'free', maxGoals: 3 });
+  });
+
+  it('keeps admin authorization separate from the app key and hides an unconfigured route', async () => {
+    delete process.env.ADMIN_API_KEY;
+    const disabled = await post('/admin/entitlement', { installId, tier: 'pro' }, {});
+    process.env.ADMIN_API_KEY = 'test-admin-key';
+    const wrong = await post(
+      '/admin/entitlement',
+      { installId, tier: 'pro' },
+      {
+        Authorization: 'Bearer wrong-key',
+        'X-App-Key': process.env.APP_API_KEY,
+      },
+    );
+    delete process.env.ADMIN_API_KEY;
+
+    expect(disabled).to.deep.equal({ status: 404, body: { error: 'Not found.' } });
+    expect(wrong).to.deep.equal({ status: 401, body: { error: 'Unauthorized.' } });
   });
 });
 
