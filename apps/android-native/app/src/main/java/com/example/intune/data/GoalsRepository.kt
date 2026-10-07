@@ -14,6 +14,7 @@ private val goalsKey = stringSetPreferencesKey("items")
 private val lastNotifiedAtKey = longPreferencesKey("last_notified_at")
 private val soundEnabledKey = booleanPreferencesKey("sound_enabled")
 private val routinePermissionPromptedKey = booleanPreferencesKey("routine_permission_prompted")
+private val lastAppVersionCheckAtKey = longPreferencesKey("last_app_version_check_at")
 const val MAX_GOALS = 3
 
 class GoalsRepository(private val context: Context) {
@@ -41,5 +42,11 @@ class GoalsRepository(private val context: Context) {
 
     suspend fun markRoutinePermissionPrompted() {
         context.goalDataStore.edit { it[routinePermissionPromptedKey] = true }
+    }
+
+    suspend fun lastAppVersionCheckAt(): Long = context.goalDataStore.data.first()[lastAppVersionCheckAtKey] ?: 0L
+
+    suspend fun saveLastAppVersionCheckAt(timestamp: Long) {
+        context.goalDataStore.edit { it[lastAppVersionCheckAtKey] = timestamp }
     }
 }

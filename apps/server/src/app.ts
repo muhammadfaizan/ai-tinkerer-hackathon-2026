@@ -3,6 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { rateLimit, requireAppKey, serviceDisabled } from './middleware/security';
 import adminRouter from './routes/admin';
+import appVersionRouter from './routes/app-version';
 import entitlementRouter from './routes/entitlement';
 import nudgeRouter from './routes/nudge';
 import { healthRequestSchema } from './routes/schemas';
@@ -20,6 +21,7 @@ app.use('/admin', express.json({ limit: '20kb' }), adminRouter);
 app.use(requireAppKey);
 app.use(rateLimit);
 app.use(express.json({ limit: '20kb' }));
+app.use('/app-version', appVersionRouter);
 app.use('/entitlement', entitlementRouter);
 app.use(nudgeRouter);
 app.use(

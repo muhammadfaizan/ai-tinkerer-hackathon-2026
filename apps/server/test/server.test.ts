@@ -15,6 +15,14 @@ let savedExaKey;
 let savedServiceDisabled;
 let savedNodeEnv;
 let savedAdminKey;
+const appVersionEnv = {
+  APP_LATEST_VERSION_CODE: '2',
+  APP_MIN_VERSION_CODE: '1',
+  APP_LATEST_VERSION_NAME: '2.0.0',
+  APP_DOWNLOAD_URL: 'https://downloads.example.com/in-tune.apk',
+  APP_RELEASE_NOTES: 'A calmer check-in experience.',
+};
+const savedAppVersionEnv = {};
 
 const completion = (value) => ({ choices: [{ message: { content: JSON.stringify(value) } }] });
 const jevAnswer = (choice, confidence = 0.9) => ({
@@ -53,6 +61,10 @@ before(async () => {
   savedServiceDisabled = process.env.SERVICE_DISABLED;
   savedNodeEnv = process.env.NODE_ENV;
   savedAdminKey = process.env.ADMIN_API_KEY;
+  for (const key of Object.keys(appVersionEnv)) {
+    savedAppVersionEnv[key] = process.env[key];
+    delete process.env[key];
+  }
   delete process.env.EXA_API_KEY;
   nock.disableNetConnect();
   nock.enableNetConnect('127.0.0.1');
@@ -72,6 +84,10 @@ after(async () => {
   if (savedNodeEnv) process.env.NODE_ENV = savedNodeEnv;
   if (savedAdminKey) process.env.ADMIN_API_KEY = savedAdminKey;
   else delete process.env.ADMIN_API_KEY;
+  for (const key of Object.keys(appVersionEnv)) {
+    if (savedAppVersionEnv[key]) process.env[key] = savedAppVersionEnv[key];
+    else delete process.env[key];
+  }
   await new Promise((resolve) => server.close(resolve));
 });
 
@@ -319,6 +335,32 @@ describe('entitlements', () => {
 
     expect(disabled).to.deep.equal({ status: 404, body: { error: 'Not found.' } });
     expect(wrong).to.deep.equal({ status: 401, body: { error: 'Unauthorized.' } });
+  });
+});
+
+describe('GET /app-version', () => {
+  it('requires an app key and is hidden until its complete HTTPS config exists', async () => {
+    const unavailable = await get('/app-version');
+    const unauthorized = await get('/app-version', {});
+    Object.assign(process.env, appVersionEnv);
+    const available = await get('/app-version');
+    delete process.env.APP_DOWNLOAD_URL;
+    const invalid = await get('/app-version');
+    Object.assign(process.env, appVersionEnv);
+
+    expect(unavailable).to.deep.equal({ status: 404, body: { error: 'Not found.' } });
+    expect(unauthorized).to.deep.equal({ status: 401, body: { error: 'Unauthorized.' } });
+    expect(available).to.deep.equal({
+      status: 200,
+      body: {
+        latestVersionCode: 2,
+        minVersionCode: 1,
+        latestVersionName: '2.0.0',
+        downloadUrl: 'https://downloads.example.com/in-tune.apk',
+        notes: 'A calmer check-in experience.',
+      },
+    });
+    expect(invalid).to.deep.equal({ status: 404, body: { error: 'Not found.' } });
   });
 });
 

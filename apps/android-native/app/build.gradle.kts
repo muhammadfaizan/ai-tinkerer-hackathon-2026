@@ -14,6 +14,18 @@ val localProperties = Properties().apply {
 val debugBackendUrl = localProperties
     .getProperty("backend.url.debug", "http://10.0.2.2:3000")
     .trimEnd('/')
+val appApiKey = localProperties.getProperty("app.apiKey", "")
+val releaseStoreFile = localProperties.getProperty("release.storeFile")
+val releaseStorePassword = localProperties.getProperty("release.storePassword")
+val releaseKeyAlias = localProperties.getProperty("release.keyAlias")
+val releaseKeyPassword = localProperties.getProperty("release.keyPassword")
+val releaseSigningConfigured = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { !it.isNullOrBlank() }
+fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 android {
     namespace = "com.example.intune"
@@ -31,12 +43,27 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            if (releaseSigningConfigured) {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         debug {
-            buildConfigField("String", "BASE_URL", "\"$debugBackendUrl\"")
+            buildConfigField("String", "BASE_URL", buildConfigString(debugBackendUrl))
+            buildConfigField("String", "APP_API_KEY", buildConfigString(appApiKey))
         }
         release {
             buildConfigField("String", "BASE_URL", "\"https://nudge-backend-olive.vercel.app\"")
+            buildConfigField("String", "APP_API_KEY", buildConfigString(appApiKey))
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }
@@ -50,6 +77,14 @@ android {
         compose = true
         // Required for the per-build backend URL generated below.
         buildConfig = true
+    }
+}
+
+tasks.matching { it.name == "packageRelease" }.configureEach {
+    doFirst {
+        check(releaseSigningConfigured) {
+            "Release signing is required. Set release.storeFile, release.storePassword, release.keyAlias, and release.keyPassword in local.properties."
+        }
     }
 }
 

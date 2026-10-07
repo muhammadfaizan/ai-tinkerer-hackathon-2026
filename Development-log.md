@@ -202,3 +202,15 @@ peach/indigo palette (prompt was given, confirm if run).
   effective tier with `403 {"error":"goal_limit"}`. Android was not
   changed: it must send a stable UUID `X-Install-Id` before a Pro grant
   can be resolved for that installation.
+
+## 2026-10-07 — External-distribution update check
+- Added authenticated `GET /app-version`. It is deliberately hidden with
+  404 until all `APP_*` release metadata variables are valid; the global
+  kill switch still runs first.
+- Android checks at startup after a successful app render, at most once per
+  12 hours. It only opens an HTTPS download URL through the system browser;
+  it does not request package-install permission or install APKs itself.
+- Release signing now reads only ignored `local.properties` keys:
+  `release.storeFile`, `release.storePassword`, `release.keyAlias`, and
+  `release.keyPassword`. `packageRelease` fails when they are absent rather
+  than silently making an unsigned release APK.
