@@ -15,9 +15,7 @@ duplicated there.
   earlier (silent OpenAI auth failure in prod) — check this first if
   a deployed endpoint ever returns error:true unexpectedly.
 - apps/android-native — Kotlin + Jetpack Compose, package
-  com.example.intune (still the placeholder Android Studio namespace —
-  rename before any Play Store submission, package name is permanent
-  once published).
+  io.github.muhammadfaizan.intune.
 - Built with Codex (OpenAI) as the coding agent for both sides.
   IMPORTANT: Codex's own sandbox has no JDK, so it can NEVER actually
   compile/run the Android app itself — it can only write code and
@@ -94,9 +92,8 @@ currently 3, don't retroactively change goalsSnapshot on old history).
   (NudgeApi/NudgeWorker/NudgeRecord/the /nudge endpoint/the Vercel
   URL — renaming those would break the installed app). Confirm this
   landed.
-- Package name com.example.intune still needs a real rename before
-  Play Store submission (separate, careful task — affects app identity
-  permanently).
+- Package rename completed for pre-release distribution; the new
+  application ID intentionally starts with fresh local app data.
 
 ## Design direction — settled after 3 iterations, currently building
 ## toward this
@@ -156,8 +153,7 @@ peach/indigo palette (prompt was given, confirm if run).
    started) — OnePlus 12 (Snapdragon 8 Gen 3, 12GB RAM) confirmed
    capable hardware; MediaPipe LLM Inference API is deprecated, use
    LiteRT-LM.
-9. Before Play Store: rename package from com.example.intune, write
-   the actual privacy policy, complete Play's Data Safety form,
+9. Before Play Store: write the actual privacy policy, complete Play's Data Safety form,
    confirm no background-location permission is used (v1 has none).
 
 ## 2026-10-07 — Backend refactor and security hardening
@@ -211,6 +207,14 @@ peach/indigo palette (prompt was given, confirm if run).
   12 hours. It only opens an HTTPS download URL through the system browser;
   it does not request package-install permission or install APKs itself.
 - Release signing now reads only ignored `local.properties` keys:
-  `release.storeFile`, `release.storePassword`, `release.keyAlias`, and
-  `release.keyPassword`. `packageRelease` fails when they are absent rather
-  than silently making an unsigned release APK.
+  `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`. Missing
+  values intentionally produce an unsigned APK with a Gradle warning.
+
+## 2026-10-08 — Android pre-release identity and release hardening
+- Renamed the Android namespace and application ID to
+  `io.github.muhammadfaizan.intune`. This is intentionally a new app:
+  old installs cannot update into it, and Room/DataStore begin empty.
+- Release now uses SDK 36, version `0.1.0` / code `1`, R8 and resource
+  shrinking, disabled backup, and no Retrofit logging. A configured
+  `local.properties` signs the APK; absent signing values yield an
+  unsigned APK with a Gradle warning for local pre-release testing.

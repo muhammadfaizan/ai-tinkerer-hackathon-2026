@@ -15,10 +15,10 @@ val debugBackendUrl = localProperties
     .getProperty("backend.url.debug", "http://10.0.2.2:3000")
     .trimEnd('/')
 val appApiKey = localProperties.getProperty("app.apiKey", "")
-val releaseStoreFile = localProperties.getProperty("release.storeFile")
-val releaseStorePassword = localProperties.getProperty("release.storePassword")
-val releaseKeyAlias = localProperties.getProperty("release.keyAlias")
-val releaseKeyPassword = localProperties.getProperty("release.keyPassword")
+val releaseStoreFile = localProperties.getProperty("storeFile")
+val releaseStorePassword = localProperties.getProperty("storePassword")
+val releaseKeyAlias = localProperties.getProperty("keyAlias")
+val releaseKeyPassword = localProperties.getProperty("keyPassword")
 val releaseSigningConfigured = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -26,19 +26,19 @@ val releaseSigningConfigured = listOf(
     releaseKeyPassword,
 ).all { !it.isNullOrBlank() }
 fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+val appVersionCode = 1
+val appVersionName = "0.1.0"
 
 android {
-    namespace = "com.example.intune"
-    compileSdk {
-        version = release(37)
-    }
+    namespace = "io.github.muhammadfaizan.intune"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.intune"
+        applicationId = "io.github.muhammadfaizan.intune"
         minSdk = 24
-        targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 36
+        versionCode = appVersionCode
+        versionName = appVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -63,10 +63,16 @@ android {
             buildConfigField("String", "APP_API_KEY", buildConfigString(appApiKey))
             if (releaseSigningConfigured) {
                 signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.warn("WARNING: Release APK will be unsigned; configure storeFile, storePassword, keyAlias, and keyPassword in local.properties.")
             }
             optimization {
-                enable = false
+                enable = true
             }
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
@@ -80,10 +86,10 @@ android {
     }
 }
 
-tasks.matching { it.name == "packageRelease" }.configureEach {
-    doFirst {
-        check(releaseSigningConfigured) {
-            "Release signing is required. Set release.storeFile, release.storePassword, release.keyAlias, and release.keyPassword in local.properties."
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("app-release-$appVersionName.apk")
         }
     }
 }

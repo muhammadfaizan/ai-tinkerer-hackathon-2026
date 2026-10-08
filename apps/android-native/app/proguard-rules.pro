@@ -1,0 +1,11 @@
+# Gson reflects these API payload properties. Room and Retrofit ship their own consumer rules.
+-keepattributes Signature,*Annotation*
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.ActivityPayload { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.SessionAppPayload { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.SessionPayload { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.RoutineContextPayload { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.NudgeRequest { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.NudgeResponse { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.ParseGoalsRequest { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.ParseGoalsResponse { <fields>; <init>(...); }
+-keep,allowoptimization class io.github.muhammadfaizan.intune.data.AppVersionResponse { <fields>; <init>(...); }
